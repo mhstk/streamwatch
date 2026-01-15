@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "StreamWatch",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxMCkeJ3o6KbCAwBF/EJdD2jOs0zBOo2DhMnWqgWpTz/Xog53cYsL/I9RJ9gKWY16GKoq5Xe9ViyK1CIck0UlzBKq764ODGuS+DwU+BYVG5TDtA3tAsLVr8z5w5BOou7MXZVXBPGAsYfWFgBtRCrH5iAimVF8t+mdVplgjPb0ztHILuJwrzwjnrTApiQIjlT/oFs3pivvBAXb5E9Bgv3zOaNnoJqawz03ZC1ci2n6ckpQ3kKU4CFc1x2iq6xtLhpiiXOTg8gDCfpxh2zkk+cqJlIeedPQyUhU+iPxzS60LvXCByooVYGgIEYue2UVi6+4r5aVsOI4tuppPoDVb8ICqwIDAQAB",
   "description": "Transform video links into a Netflix-like streaming experience with watch history and series management",
   "icons": {
     "16": "icons/icon16.png",
