@@ -25,6 +25,11 @@ jobs:
       - name: Build extension
         run: npm run build
 
+      - name: List dist contents (debug)
+        run: |
+          echo "=== dist folder contents ==="
+          ls -laR dist/
+
       - name: Get version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -32,7 +37,9 @@ jobs:
       - name: Create zip
         run: |
           cd dist
-          zip -r ../StreamWatch-${{ steps.version.outputs.VERSION }}.zip .
+          zip -r ../StreamWatch-${{ steps.version.outputs.VERSION }}.zip . -x "*.DS_Store"
+          echo "=== Zip contents ==="
+          unzip -l ../StreamWatch-${{ steps.version.outputs.VERSION }}.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
