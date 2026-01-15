@@ -2,14 +2,15 @@ import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 
-// Firebase configuration from environment variables
+// Firebase configuration
+// These are public client-side keys - security is handled through Firebase Security Rules
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: 'AIzaSyB-PV4zMN3cetCj3vC40NN2Au056ztR0BI',
+  authDomain: 'streamwatch-2dfd2.firebaseapp.com',
+  projectId: 'streamwatch-2dfd2',
+  storageBucket: 'streamwatch-2dfd2.firebasestorage.app',
+  messagingSenderId: '500362425893',
+  appId: '1:500362425893:web:1f961bba1c012d5c38b1cc',
 };
 
 // Initialize Firebase
