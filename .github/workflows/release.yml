@@ -36,9 +36,19 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Create zip
+      - name: Verify dist exists
         run: |
-          cd dist
+          if [ ! -d "dist" ]; then
+            echo "ERROR: dist folder does not exist!"
+            exit 1
+          fi
+          echo "dist folder exists with contents:"
+          ls -la dist/
+
+      - name: Create zip from dist
+        working-directory: dist
+        run: |
+          echo "Current directory: $(pwd)"
           zip -r ../StreamWatch-${{ steps.version.outputs.VERSION }}.zip . -x "*.DS_Store"
           echo "=== Zip contents ==="
           unzip -l ../StreamWatch-${{ steps.version.outputs.VERSION }}.zip
