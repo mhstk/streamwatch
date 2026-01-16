@@ -2,7 +2,8 @@
 // API Documentation: https://subsource.net/api-docs
 
 const SUBSOURCE_API_URL = 'https://api.subsource.net/api/v1';
-const SUBSOURCE_API_KEY = import.meta.env.VITE_SUBSOURCE_API_KEY || '';
+// SubSource API key - hardcoded for distribution
+const SUBSOURCE_API_KEY = 'sk_d56fb0c0c222144040f3da203de0519af66dba8c01b7b6e801ccb8387aa51025';
 
 export interface SubtitleSearchResult {
   id: number;

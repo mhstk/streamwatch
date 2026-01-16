@@ -5,7 +5,8 @@ import { logger } from './logger';
 
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
-const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || '';
+// TMDB API key - this is a public client-side key for a free API
+const TMDB_API_KEY = 'd45b49d6358e0d3304b91f3ed96dd1c4';
 
 // Log API key status on module load
 logger.info('tmdb', 'Module loaded', { hasApiKey: !!TMDB_API_KEY, keyLength: TMDB_API_KEY.length });
