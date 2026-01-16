@@ -31,6 +31,17 @@ function generateVideoId(url: string): string {
   return Math.abs(hash).toString(36);
 }
 
+// Poster info to save with video history
+export interface VideoPosterInfo {
+  posterUrl?: string;
+  backdropUrl?: string;
+  mediaTitle?: string;
+  mediaYear?: number;
+  mediaType?: 'movie' | 'tv';
+  mediaRating?: number;
+  mediaOverview?: string;
+}
+
 /**
  * Save or update video progress
  */
@@ -39,7 +50,8 @@ export async function saveVideoProgress(
   videoUrl: string,
   progress: number,
   duration: number,
-  title: string
+  title: string,
+  posterInfo?: VideoPosterInfo
 ): Promise<void> {
   const videoId = generateVideoId(videoUrl);
   const progressPercent = duration > 0 ? Math.round((progress / duration) * 100) : 0;
@@ -59,7 +71,7 @@ export async function saveVideoProgress(
   try {
     const db = getFirebaseDb();
 
-    const videoData = {
+    const videoData: Record<string, unknown> = {
       url: videoUrl,
       title,
       sourceHost: extractHost(videoUrl),
@@ -71,6 +83,17 @@ export async function saveVideoProgress(
       updatedAt: serverTimestamp(),
     };
 
+    // Include poster info if provided
+    if (posterInfo) {
+      if (posterInfo.posterUrl) videoData.posterUrl = posterInfo.posterUrl;
+      if (posterInfo.backdropUrl) videoData.backdropUrl = posterInfo.backdropUrl;
+      if (posterInfo.mediaTitle) videoData.mediaTitle = posterInfo.mediaTitle;
+      if (posterInfo.mediaYear) videoData.mediaYear = posterInfo.mediaYear;
+      if (posterInfo.mediaType) videoData.mediaType = posterInfo.mediaType;
+      if (posterInfo.mediaRating !== undefined) videoData.mediaRating = posterInfo.mediaRating;
+      if (posterInfo.mediaOverview) videoData.mediaOverview = posterInfo.mediaOverview;
+    }
+
     await setDoc(
       doc(db, 'users', userId, 'history', videoId),
       videoData,
@@ -80,6 +103,55 @@ export async function saveVideoProgress(
     logger.info('firestore', 'SAVE_SUCCESS', { videoId, progressPercent });
   } catch (err) {
     logger.error('firestore', 'SAVE_FAILED', { videoId, error: err });
+    throw err;
+  }
+}
+
+/**
+ * Update poster info for a video (called after TMDB lookup)
+ */
+export async function updateVideoPoster(
+  userId: string,
+  videoUrl: string,
+  posterInfo: VideoPosterInfo
+): Promise<void> {
+  const videoId = generateVideoId(videoUrl);
+
+  logger.info('firestore', 'UPDATE_POSTER', {
+    userId,
+    videoId,
+    hasPostet: !!posterInfo.posterUrl,
+    mediaTitle: posterInfo.mediaTitle,
+  });
+
+  try {
+    const db = getFirebaseDb();
+    const docRef = doc(db, 'users', userId, 'history', videoId);
+
+    // Check if document exists first
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) {
+      logger.debug('firestore', 'UPDATE_POSTER_NO_DOC', { videoId });
+      return;
+    }
+
+    const updateData: Record<string, unknown> = {
+      updatedAt: serverTimestamp(),
+    };
+
+    if (posterInfo.posterUrl) updateData.posterUrl = posterInfo.posterUrl;
+    if (posterInfo.backdropUrl) updateData.backdropUrl = posterInfo.backdropUrl;
+    if (posterInfo.mediaTitle) updateData.mediaTitle = posterInfo.mediaTitle;
+    if (posterInfo.mediaYear) updateData.mediaYear = posterInfo.mediaYear;
+    if (posterInfo.mediaType) updateData.mediaType = posterInfo.mediaType;
+    if (posterInfo.mediaRating !== undefined) updateData.mediaRating = posterInfo.mediaRating;
+    if (posterInfo.mediaOverview) updateData.mediaOverview = posterInfo.mediaOverview;
+
+    await updateDoc(docRef, updateData);
+
+    logger.info('firestore', 'UPDATE_POSTER_SUCCESS', { videoId });
+  } catch (err) {
+    logger.error('firestore', 'UPDATE_POSTER_FAILED', { videoId, error: err });
     throw err;
   }
 }
@@ -106,7 +178,7 @@ export async function getVideoProgress(
 
     if (docSnap.exists()) {
       const data = docSnap.data();
-      const result = {
+      const result: VideoHistory = {
         id: docSnap.id,
         url: data.url,
         title: data.title,
@@ -117,6 +189,14 @@ export async function getVideoProgress(
         completed: data.completed || false,
         lastWatched: data.lastWatched,
         createdAt: data.createdAt || data.lastWatched,
+        // Poster info
+        posterUrl: data.posterUrl,
+        backdropUrl: data.backdropUrl,
+        mediaTitle: data.mediaTitle,
+        mediaYear: data.mediaYear,
+        mediaType: data.mediaType,
+        mediaRating: data.mediaRating,
+        mediaOverview: data.mediaOverview,
       };
 
       logger.info('firestore', 'GET_PROGRESS_FOUND', {
@@ -159,10 +239,10 @@ export async function getRecentHistory(
 
     const history: VideoHistory[] = [];
 
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
       history.push({
-        id: doc.id,
+        id: docSnap.id,
         url: data.url,
         title: data.title,
         sourceHost: data.sourceHost || '',
@@ -172,6 +252,14 @@ export async function getRecentHistory(
         completed: data.completed || false,
         lastWatched: data.lastWatched,
         createdAt: data.createdAt || data.lastWatched,
+        // Poster info
+        posterUrl: data.posterUrl,
+        backdropUrl: data.backdropUrl,
+        mediaTitle: data.mediaTitle,
+        mediaYear: data.mediaYear,
+        mediaType: data.mediaType,
+        mediaRating: data.mediaRating,
+        mediaOverview: data.mediaOverview,
       });
     });
 

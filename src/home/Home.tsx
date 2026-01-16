@@ -4,6 +4,8 @@ import { useRecentHistory } from '@/hooks/useRecentHistory';
 import { formatTime } from '@/lib/utils';
 import { logger } from '@/lib/logger';
 import { VideoHistory } from '@/types';
+import { getPosterFromFilename } from '@/lib/tmdb';
+import { updateVideoPoster, VideoPosterInfo } from '@/lib/firestore';
 
 export default function Home() {
   const { user, isLoading: isAuthLoading, signIn, logOut } = useAuth();
@@ -11,11 +13,70 @@ export default function Home() {
   const [isReady, setIsReady] = useState(false);
   const [heroVideo, setHeroVideo] = useState<VideoHistory | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [heroBackdrop, setHeroBackdrop] = useState<string | null>(null);
+  const [heroInfo, setHeroInfo] = useState<{ title: string; year?: number; rating?: number; overview?: string } | null>(null);
 
   useEffect(() => {
     logger.info('home', 'Home page mounted');
     setTimeout(() => setIsReady(true), 100);
   }, []);
+
+  // Load hero poster (from stored data or fetch from TMDB)
+  useEffect(() => {
+    if (!heroVideo) return;
+
+    // First check if poster data is already stored
+    if (heroVideo.backdropUrl) {
+      setHeroBackdrop(heroVideo.backdropUrl);
+      setHeroInfo({
+        title: heroVideo.mediaTitle || heroVideo.title,
+        year: heroVideo.mediaYear,
+        rating: heroVideo.mediaRating,
+        overview: heroVideo.mediaOverview,
+      });
+      return;
+    }
+
+    // Fetch from TMDB if not stored
+    let cancelled = false;
+    const fetchPoster = async () => {
+      try {
+        const result = await getPosterFromFilename(heroVideo.title);
+        if (cancelled) return;
+
+        if (result.backdrop || result.info) {
+          setHeroBackdrop(result.backdrop);
+          setHeroInfo(result.info ? {
+            title: result.info.title,
+            year: result.info.year,
+            rating: result.info.rating,
+            overview: result.info.overview,
+          } : null);
+
+          // Save to Firestore for next time (only if user is logged in)
+          if (user && result.info) {
+            const posterInfo: VideoPosterInfo = {
+              posterUrl: result.medium || undefined,
+              backdropUrl: result.backdrop || undefined,
+              mediaTitle: result.info.title,
+              mediaYear: result.info.year,
+              mediaType: result.info.type,
+              mediaRating: result.info.rating,
+              mediaOverview: result.info.overview,
+            };
+            updateVideoPoster(user.uid, heroVideo.url, posterInfo).catch(err => {
+              logger.error('home', 'Failed to save hero poster', err);
+            });
+          }
+        }
+      } catch (err) {
+        logger.error('home', 'Failed to fetch hero poster', err);
+      }
+    };
+
+    fetchPoster();
+    return () => { cancelled = true; };
+  }, [heroVideo, user]);
 
   // Set hero video to most recent
   useEffect(() => {
@@ -127,12 +188,25 @@ export default function Home() {
 
       {/* Hero Section */}
       <section className="relative h-[85vh] min-h-[600px]">
+        {/* Backdrop Image */}
+        {heroBackdrop && (
+          <div className="absolute inset-0">
+            <img
+              src={heroBackdrop}
+              alt=""
+              className="w-full h-full object-cover object-top"
+            />
+          </div>
+        )}
+
         {/* Background Gradient */}
         <div className="absolute inset-0 bg-gradient-to-r from-black via-black/60 to-transparent z-10" />
         <div className="absolute inset-0 bg-gradient-to-t from-sw-dark via-transparent to-transparent z-10" />
 
-        {/* Hero Background Pattern */}
-        <div className="absolute inset-0 bg-gradient-to-br from-sw-red/20 via-transparent to-transparent opacity-50" />
+        {/* Hero Background Pattern (fallback when no backdrop) */}
+        {!heroBackdrop && (
+          <div className="absolute inset-0 bg-gradient-to-br from-sw-red/20 via-transparent to-transparent opacity-50" />
+        )}
 
         {/* Content */}
         <div className="relative z-20 h-full flex items-center">
@@ -148,15 +222,31 @@ export default function Home() {
 
                   {/* Title */}
                   <h2 className="text-5xl md:text-6xl font-bold leading-tight">
-                    {heroVideo.title}
+                    {heroInfo?.title || heroVideo.title}
                   </h2>
 
                   {/* Meta */}
                   <div className="flex items-center gap-4 text-sw-gray">
                     <span className="text-green-500 font-medium">{heroVideo.progressPercent}% Complete</span>
+                    {heroInfo?.year && <span>{heroInfo.year}</span>}
                     <span>{formatTime(heroVideo.duration)}</span>
+                    {heroInfo?.rating && heroInfo.rating > 0 && (
+                      <span className="flex items-center gap-1">
+                        <svg className="w-4 h-4 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                        </svg>
+                        {heroInfo.rating.toFixed(1)}
+                      </span>
+                    )}
                     <span className="px-2 py-0.5 border border-sw-gray/50 text-xs">HD</span>
                   </div>
+
+                  {/* Overview */}
+                  {heroInfo?.overview && (
+                    <p className="text-sw-light-gray text-lg max-w-xl line-clamp-3">
+                      {heroInfo.overview}
+                    </p>
+                  )}
 
                   {/* Progress Bar */}
                   <div className="w-full max-w-md h-1 bg-gray-700 rounded-full overflow-hidden">
@@ -213,6 +303,7 @@ export default function Home() {
             videos={continueWatching}
             onPlay={handlePlayVideo}
             showProgress
+            userId={user?.uid}
           />
         )}
 
@@ -222,6 +313,7 @@ export default function Home() {
             title="Watch Again"
             videos={completed}
             onPlay={handlePlayVideo}
+            userId={user?.uid}
           />
         )}
 
@@ -232,6 +324,7 @@ export default function Home() {
             videos={history}
             onPlay={handlePlayVideo}
             showProgress
+            userId={user?.uid}
           />
         )}
 
@@ -276,9 +369,10 @@ interface VideoRowProps {
   videos: VideoHistory[];
   onPlay: (url: string) => void;
   showProgress?: boolean;
+  userId?: string;
 }
 
-function VideoRow({ title, videos, onPlay, showProgress }: VideoRowProps) {
+function VideoRow({ title, videos, onPlay, showProgress, userId }: VideoRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
@@ -360,6 +454,7 @@ function VideoRow({ title, videos, onPlay, showProgress }: VideoRowProps) {
               video={video}
               onPlay={onPlay}
               showProgress={showProgress}
+              userId={userId}
             />
           ))}
         </div>
@@ -373,10 +468,75 @@ interface VideoCardProps {
   video: VideoHistory;
   onPlay: (url: string) => void;
   showProgress?: boolean;
+  userId?: string;
 }
 
-function VideoCard({ video, onPlay, showProgress }: VideoCardProps) {
+function VideoCard({ video, onPlay, showProgress, userId }: VideoCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [poster, setPoster] = useState<string | null>(video.posterUrl || null);
+  const [info, setInfo] = useState<{ title: string; year?: number } | null>(
+    video.mediaTitle ? { title: video.mediaTitle, year: video.mediaYear } : null
+  );
+  const [isLoading, setIsLoading] = useState(!video.posterUrl);
+
+  // Fetch poster from TMDB only if not stored in history
+  useEffect(() => {
+    logger.debug('home', 'VideoCard useEffect', {
+      title: video.title,
+      hasPosterUrl: !!video.posterUrl,
+      posterUrl: video.posterUrl
+    });
+
+    if (video.posterUrl) {
+      // Already have stored poster
+      logger.debug('home', 'Using stored poster', { title: video.title });
+      setPoster(video.posterUrl);
+      setInfo({ title: video.mediaTitle || video.title, year: video.mediaYear });
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchPoster = async () => {
+      logger.info('home', 'Fetching poster from TMDB', { title: video.title });
+      try {
+        const result = await getPosterFromFilename(video.title);
+        logger.debug('home', 'TMDB result', {
+          title: video.title,
+          hasMedium: !!result.medium,
+          hasInfo: !!result.info
+        });
+        if (cancelled) return;
+
+        setPoster(result.medium);
+        setInfo(result.info ? { title: result.info.title, year: result.info.year } : null);
+        setIsLoading(false);
+
+        // Save to Firestore for next time
+        if (userId && result.info) {
+          logger.info('home', 'Saving poster to Firestore', { title: video.title, userId });
+          const posterInfo: VideoPosterInfo = {
+            posterUrl: result.medium || undefined,
+            backdropUrl: result.backdrop || undefined,
+            mediaTitle: result.info.title,
+            mediaYear: result.info.year,
+            mediaType: result.info.type,
+            mediaRating: result.info.rating,
+            mediaOverview: result.info.overview,
+          };
+          updateVideoPoster(userId, video.url, posterInfo).catch(err => {
+            logger.error('home', 'Failed to save poster', err);
+          });
+        }
+      } catch (err) {
+        logger.error('home', 'Failed to fetch poster', { title: video.title, error: err });
+        setIsLoading(false);
+      }
+    };
+
+    fetchPoster();
+    return () => { cancelled = true; };
+  }, [video.posterUrl, video.title, video.url, video.mediaTitle, video.mediaYear, userId]);
 
   return (
     <div
@@ -390,13 +550,23 @@ function VideoCard({ video, onPlay, showProgress }: VideoCardProps) {
         }`}
         onClick={() => onPlay(video.url)}
       >
-        {/* Thumbnail Placeholder */}
-        <div className="aspect-video bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center">
-          <div className="w-16 h-16 bg-sw-red/20 rounded-full flex items-center justify-center">
-            <svg className="w-8 h-8 text-sw-red" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-          </div>
+        {/* Thumbnail / Poster */}
+        <div className="aspect-video bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center overflow-hidden">
+          {poster ? (
+            <img
+              src={poster}
+              alt={info?.title || video.title}
+              className="w-full h-full object-cover"
+            />
+          ) : isLoading ? (
+            <div className="w-10 h-10 border-2 border-sw-red/30 border-t-sw-red rounded-full animate-spin" />
+          ) : (
+            <div className="w-16 h-16 bg-sw-red/20 rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-sw-red" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+            </div>
+          )}
         </div>
 
         {/* Progress Bar */}
@@ -444,8 +614,11 @@ function VideoCard({ video, onPlay, showProgress }: VideoCardProps) {
 
       {/* Title (below card) */}
       <p className={`text-sm mt-2 truncate transition-opacity ${isHovered ? 'opacity-0' : 'opacity-100'}`}>
-        {video.title}
+        {info?.title || video.title}
       </p>
+      {info?.year && !isHovered && (
+        <p className="text-xs text-sw-gray">{info.year}</p>
+      )}
     </div>
   );
 }

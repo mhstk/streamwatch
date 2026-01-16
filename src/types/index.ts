@@ -14,6 +14,14 @@ export interface VideoHistory {
   createdAt: Timestamp;
   seriesId?: string;             // If part of a series
   episodeIndex?: number;         // Position in series
+  // Poster info from TMDB (fetched once, stored)
+  posterUrl?: string;            // Medium size poster URL
+  backdropUrl?: string;          // Backdrop image URL
+  mediaTitle?: string;           // Official title from TMDB
+  mediaYear?: number;            // Release year
+  mediaType?: 'movie' | 'tv';    // Media type
+  mediaRating?: number;          // TMDB rating (0-10)
+  mediaOverview?: string;        // Description/overview
 }
 
 // Episode within a series
