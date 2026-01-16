@@ -528,3 +528,111 @@ export async function findSeriesByVideoUrl(userId: string, videoUrl: string): Pr
     throw err;
   }
 }
+
+// ==================== SUBTITLE PREFERENCES ====================
+
+export interface SubtitlePreference {
+  subtitleId: number;
+  language: string;
+  languageName: string;
+  release: string;
+  savedAt: any;
+}
+
+/**
+ * Save subtitle preference for a video
+ */
+export async function saveSubtitlePreference(
+  userId: string,
+  videoUrl: string,
+  preference: Omit<SubtitlePreference, 'savedAt'>
+): Promise<void> {
+  const videoId = generateVideoId(videoUrl);
+
+  logger.info('firestore', 'SAVE_SUBTITLE_PREF', {
+    userId,
+    videoId,
+    subtitleId: preference.subtitleId,
+    language: preference.language,
+  });
+
+  try {
+    const db = getFirebaseDb();
+
+    await setDoc(doc(db, 'users', userId, 'subtitlePrefs', videoId), {
+      ...preference,
+      videoUrl,
+      savedAt: serverTimestamp(),
+    });
+
+    logger.info('firestore', 'SAVE_SUBTITLE_PREF_SUCCESS', { videoId, subtitleId: preference.subtitleId });
+  } catch (err) {
+    logger.error('firestore', 'SAVE_SUBTITLE_PREF_FAILED', { videoId, error: err });
+    throw err;
+  }
+}
+
+/**
+ * Get subtitle preference for a video
+ */
+export async function getSubtitlePreference(
+  userId: string,
+  videoUrl: string
+): Promise<SubtitlePreference | null> {
+  const videoId = generateVideoId(videoUrl);
+
+  logger.info('firestore', 'GET_SUBTITLE_PREF', { userId, videoId });
+
+  try {
+    const db = getFirebaseDb();
+    const docRef = doc(db, 'users', userId, 'subtitlePrefs', videoId);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const result: SubtitlePreference = {
+        subtitleId: data.subtitleId,
+        language: data.language,
+        languageName: data.languageName,
+        release: data.release,
+        savedAt: data.savedAt,
+      };
+
+      logger.info('firestore', 'GET_SUBTITLE_PREF_FOUND', {
+        videoId,
+        subtitleId: result.subtitleId,
+        language: result.language,
+      });
+
+      return result;
+    }
+
+    logger.debug('firestore', 'GET_SUBTITLE_PREF_NOT_FOUND', { videoId });
+    return null;
+  } catch (err) {
+    logger.error('firestore', 'GET_SUBTITLE_PREF_FAILED', { videoId, error: err });
+    throw err;
+  }
+}
+
+/**
+ * Delete subtitle preference for a video
+ */
+export async function deleteSubtitlePreference(
+  userId: string,
+  videoUrl: string
+): Promise<void> {
+  const videoId = generateVideoId(videoUrl);
+
+  logger.info('firestore', 'DELETE_SUBTITLE_PREF', { userId, videoId });
+
+  try {
+    const db = getFirebaseDb();
+    await firestoreDeleteDoc(doc(db, 'users', userId, 'subtitlePrefs', videoId));
+
+    logger.info('firestore', 'DELETE_SUBTITLE_PREF_SUCCESS', { videoId });
+  } catch (err) {
+    logger.error('firestore', 'DELETE_SUBTITLE_PREF_FAILED', { videoId, error: err });
+    throw err;
+  }
+}

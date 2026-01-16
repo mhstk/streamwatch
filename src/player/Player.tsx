@@ -2,11 +2,16 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { extractTitleFromUrl, extractHost, formatTime } from '@/lib/utils';
 import { useVideoProgress } from '@/hooks/useVideoProgress';
 import { useSeries } from '@/hooks/useSeries';
+import { useAuth } from '@/hooks/useAuth';
 import { logger } from '@/lib/logger';
 import SeriesSidebar from './components/SeriesSidebar';
 import NextEpisodeOverlay from './components/NextEpisodeOverlay';
 import AddToSeriesModal from './components/AddToSeriesModal';
+import SubtitleModal, { SubtitleSource } from './components/SubtitleModal';
 import { Episode } from '@/types';
+import { fetchSubtitle, readSubtitleFile, createSubtitleBlobUrl } from '@/lib/subtitles';
+import { saveSubtitlePreference, getSubtitlePreference } from '@/lib/firestore';
+import { downloadSubtitle, extractSubtitleFromZip } from '@/lib/subtitleSearch';
 
 export default function Player() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -19,7 +24,11 @@ export default function Player() {
   const [showNextEpisode, setShowNextEpisode] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showSubtitleModal, setShowSubtitleModal] = useState(false);
+  const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
+  const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Progress tracking hook
   const {
@@ -51,6 +60,9 @@ export default function Player() {
     refresh: refreshSeries,
   } = useSeries();
 
+  // Auth hook for subtitle preferences
+  const { user } = useAuth();
+
   // Load video from URL params
   useEffect(() => {
     logger.info('player', 'Player mounted');
@@ -81,6 +93,138 @@ export default function Player() {
       loadSeriesForVideo(videoUrl);
     }
   }, [videoUrl, loadSeriesForVideo]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't handle if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const video = videoRef.current;
+      if (!video) return;
+
+      switch (e.key.toLowerCase()) {
+        case ' ':
+        case 'k':
+          e.preventDefault();
+          if (video.paused) {
+            video.play();
+          } else {
+            video.pause();
+          }
+          break;
+
+        case 'f':
+          e.preventDefault();
+          if (document.fullscreenElement) {
+            document.exitFullscreen();
+          } else {
+            videoRef.current?.requestFullscreen();
+          }
+          break;
+
+        case 'm':
+          e.preventDefault();
+          video.muted = !video.muted;
+          break;
+
+        case 'arrowleft':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 10);
+          break;
+
+        case 'arrowright':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration, video.currentTime + 10);
+          break;
+
+        case 'arrowup':
+          e.preventDefault();
+          video.volume = Math.min(1, video.volume + 0.1);
+          break;
+
+        case 'arrowdown':
+          e.preventDefault();
+          video.volume = Math.max(0, video.volume - 0.1);
+          break;
+
+        case 'j':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 10);
+          break;
+
+        case 'l':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration, video.currentTime + 10);
+          break;
+
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+          e.preventDefault();
+          const percent = parseInt(e.key) * 10;
+          video.currentTime = (percent / 100) * video.duration;
+          break;
+
+        case 'home':
+          e.preventDefault();
+          video.currentTime = 0;
+          break;
+
+        case 'end':
+          e.preventDefault();
+          video.currentTime = video.duration;
+          break;
+
+        case ',':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - (1 / 30)); // Frame back
+          break;
+
+        case '.':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration, video.currentTime + (1 / 30)); // Frame forward
+          break;
+
+        case '<':
+          e.preventDefault();
+          video.playbackRate = Math.max(0.25, video.playbackRate - 0.25);
+          break;
+
+        case '>':
+          e.preventDefault();
+          video.playbackRate = Math.min(2, video.playbackRate + 0.25);
+          break;
+
+        case 'c':
+          e.preventDefault();
+          // Toggle subtitles: if active, turn off; if off, turn on first subtitle
+          if (subtitles.length > 0) {
+            if (activeSubtitleIndex !== null) {
+              setActiveSubtitleIndex(null);
+            } else {
+              setActiveSubtitleIndex(0);
+            }
+          } else {
+            // No subtitles, open the modal
+            setShowSubtitleModal(true);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [subtitles, activeSubtitleIndex]);
 
   // Navigate to new video
   const navigateToVideo = useCallback((url: string, episodeTitle?: string) => {
@@ -229,6 +373,145 @@ export default function Player() {
     await refreshSeries();
   }, [removeSeries, refreshSeries]);
 
+  // Subtitle handlers
+  const handleAddSubtitle = useCallback(async (source: SubtitleSource) => {
+    try {
+      let blobUrl: string;
+
+      if (source.type === 'search') {
+        // Already a blob URL from SubtitleModal
+        blobUrl = source.data as string;
+
+        // Save preference if user is logged in
+        if (user && videoUrl && source.subtitleId) {
+          saveSubtitlePreference(user.uid, videoUrl, {
+            subtitleId: source.subtitleId,
+            language: source.language || '',
+            languageName: source.languageName || '',
+            release: source.release || '',
+          }).catch(err => {
+            logger.error('player', 'SAVE_SUBTITLE_PREF_ERROR', { error: err });
+          });
+        }
+      } else if (source.type === 'url') {
+        const content = await fetchSubtitle(source.data as string);
+        blobUrl = createSubtitleBlobUrl(content);
+      } else {
+        const content = await readSubtitleFile(source.data as File);
+        blobUrl = createSubtitleBlobUrl(content);
+      }
+
+      setSubtitles(prev => [...prev, { label: source.label, src: blobUrl }]);
+
+      // Auto-select if it's the first subtitle
+      if (subtitles.length === 0) {
+        setActiveSubtitleIndex(0);
+      }
+
+      logger.info('player', 'SUBTITLE_ADDED', { label: source.label, type: source.type });
+    } catch (err) {
+      logger.error('player', 'SUBTITLE_ADD_ERROR', { error: err instanceof Error ? err.message : 'Unknown error' });
+      throw err;
+    }
+  }, [subtitles.length, user, videoUrl]);
+
+  const handleRemoveSubtitle = useCallback((index: number) => {
+    // Revoke the blob URL to free memory
+    const subtitleToRemove = subtitles[index];
+    if (subtitleToRemove?.src.startsWith('blob:')) {
+      URL.revokeObjectURL(subtitleToRemove.src);
+    }
+
+    setSubtitles(prev => prev.filter((_, i) => i !== index));
+
+    // Adjust active index if needed
+    if (activeSubtitleIndex === index) {
+      setActiveSubtitleIndex(null);
+    } else if (activeSubtitleIndex !== null && activeSubtitleIndex > index) {
+      setActiveSubtitleIndex(activeSubtitleIndex - 1);
+    }
+
+    logger.info('player', 'SUBTITLE_REMOVED', { index });
+  }, [subtitles, activeSubtitleIndex]);
+
+  const handleSelectSubtitle = useCallback((index: number | null) => {
+    setActiveSubtitleIndex(index);
+    logger.info('player', 'SUBTITLE_SELECTED', { index });
+  }, []);
+
+  // Cleanup blob URLs when component unmounts or video changes
+  useEffect(() => {
+    return () => {
+      subtitles.forEach(sub => {
+        if (sub.src.startsWith('blob:')) {
+          URL.revokeObjectURL(sub.src);
+        }
+      });
+    };
+  }, []);
+
+  // Clear subtitles when video changes
+  useEffect(() => {
+    if (videoUrl) {
+      // Clear existing subtitles when navigating to new video
+      subtitles.forEach(sub => {
+        if (sub.src.startsWith('blob:')) {
+          URL.revokeObjectURL(sub.src);
+        }
+      });
+      setSubtitles([]);
+      setActiveSubtitleIndex(null);
+    }
+  }, [videoUrl]);
+
+  // Sync active subtitle with video text tracks
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !video.textTracks) return;
+
+    for (let i = 0; i < video.textTracks.length; i++) {
+      const track = video.textTracks[i];
+      track.mode = i === activeSubtitleIndex ? 'showing' : 'hidden';
+    }
+  }, [activeSubtitleIndex, subtitles]);
+
+  // Load saved subtitle preference when video loads
+  useEffect(() => {
+    if (!videoUrl || !user) return;
+
+    const loadSavedSubtitle = async () => {
+      try {
+        const preference = await getSubtitlePreference(user.uid, videoUrl);
+        if (!preference) {
+          logger.debug('player', 'NO_SAVED_SUBTITLE_PREF');
+          return;
+        }
+
+        logger.info('player', 'LOADING_SAVED_SUBTITLE', {
+          subtitleId: preference.subtitleId,
+          language: preference.language,
+        });
+
+        // Download and apply the saved subtitle
+        const zipBlob = await downloadSubtitle(preference.subtitleId);
+        const content = await extractSubtitleFromZip(zipBlob);
+        const blobUrl = createSubtitleBlobUrl(content);
+
+        setSubtitles([{ label: `${preference.languageName} - ${preference.release}`, src: blobUrl }]);
+        setActiveSubtitleIndex(0);
+
+        logger.info('player', 'SAVED_SUBTITLE_LOADED', { language: preference.languageName });
+      } catch (err) {
+        logger.error('player', 'LOAD_SAVED_SUBTITLE_ERROR', { error: err });
+        // Don't throw - just log the error and continue without subtitle
+      }
+    };
+
+    // Small delay to let video load first
+    const timer = setTimeout(loadSavedSubtitle, 500);
+    return () => clearTimeout(timer);
+  }, [videoUrl, user]);
+
   const progressPercent = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
 
   if (!videoUrl) {
@@ -257,7 +540,7 @@ export default function Player() {
   return (
     <div className={`min-h-screen bg-sw-dark text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
       {/* Video Player Container */}
-      <div className="relative w-full bg-black">
+      <div ref={containerRef} className="relative w-full bg-black">
         {/* Loading Overlay */}
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
@@ -326,6 +609,15 @@ export default function Player() {
           onCanPlay={() => setIsLoading(false)}
           onEnded={handleVideoEnded}
         >
+          {subtitles.map((sub, index) => (
+            <track
+              key={`${sub.src}-${index}`}
+              kind="subtitles"
+              label={sub.label}
+              src={sub.src}
+              default={activeSubtitleIndex === index}
+            />
+          ))}
           Your browser does not support the video tag.
         </video>
       </div>
@@ -425,6 +717,25 @@ export default function Player() {
             </button>
           )}
 
+          <button
+            onClick={() => setShowSubtitleModal(true)}
+            className={`group flex items-center gap-2 py-3 px-5 rounded-lg font-medium active:scale-95 transition-all duration-200 border ${
+              subtitles.length > 0
+                ? 'bg-sw-red/20 text-sw-red border-sw-red/30 hover:bg-sw-red/30'
+                : 'bg-gray-800 text-white border-gray-700 hover:bg-gray-700'
+            }`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+            </svg>
+            Subtitles
+            {subtitles.length > 0 && (
+              <span className="text-xs bg-sw-red/30 px-1.5 py-0.5 rounded">
+                {activeSubtitleIndex !== null ? 'ON' : 'OFF'}
+              </span>
+            )}
+          </button>
+
           <button className="group flex items-center gap-2 py-3 px-5 bg-gray-800/50 text-sw-light-gray rounded-lg font-medium hover:bg-gray-800 hover:text-white active:scale-95 transition-all duration-200 border border-gray-700/50">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
@@ -438,7 +749,13 @@ export default function Player() {
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-sw-dark to-transparent pointer-events-none">
         <div className="max-w-5xl mx-auto flex justify-between items-center text-xs text-sw-gray">
           <span>StreamWatch</span>
-          <span>Press F for fullscreen</span>
+          <span className="flex gap-4">
+            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">Space</kbd> Play/Pause</span>
+            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">F</kbd> Fullscreen</span>
+            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">M</kbd> Mute</span>
+            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">C</kbd> Subtitles</span>
+            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">←→</kbd> Seek 10s</span>
+          </span>
         </div>
       </div>
 
@@ -464,6 +781,18 @@ export default function Player() {
         onAddToSeries={handleAddToSeries}
         onCreateSeries={handleCreateSeries}
         onAddEpisodeToSeries={handleAddEpisodeToSeries}
+      />
+
+      {/* Subtitle Modal */}
+      <SubtitleModal
+        isOpen={showSubtitleModal}
+        onClose={() => setShowSubtitleModal(false)}
+        onAddSubtitle={handleAddSubtitle}
+        currentSubtitles={subtitles}
+        onRemoveSubtitle={handleRemoveSubtitle}
+        activeSubtitleIndex={activeSubtitleIndex}
+        onSelectSubtitle={handleSelectSubtitle}
+        videoTitle={title}
       />
     </div>
   );
