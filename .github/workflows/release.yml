@@ -21,6 +21,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Verify source files
+        run: |
+          echo "=== Checking public/icons ==="
+          ls -la public/icons/ || echo "NO public/icons folder!"
+          echo "=== Checking vite config ==="
+          cat vite.config.ts | grep -A2 "publicDir"
+
       - name: Install dependencies
         run: npm ci
 

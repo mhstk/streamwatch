@@ -1,20 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useRecentHistory } from '@/hooks/useRecentHistory';
+import { useSeries } from '@/hooks/useSeries';
 import { formatTime } from '@/lib/utils';
 import { logger } from '@/lib/logger';
-import { VideoHistory } from '@/types';
+import { VideoHistory, Series, Episode } from '@/types';
 import { getPosterFromFilename } from '@/lib/tmdb';
 import { updateVideoPoster, VideoPosterInfo } from '@/lib/firestore';
+import SeriesCard from './components/SeriesCard';
+import SeriesDetailModal from './components/SeriesDetailModal';
 
 export default function Home() {
   const { user, isLoading: isAuthLoading, signIn, logOut } = useAuth();
   const { history, isLoading: isHistoryLoading } = useRecentHistory(20);
+  const { allSeries, removeSeries } = useSeries();
   const [isReady, setIsReady] = useState(false);
   const [heroVideo, setHeroVideo] = useState<VideoHistory | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [heroBackdrop, setHeroBackdrop] = useState<string | null>(null);
   const [heroInfo, setHeroInfo] = useState<{ title: string; year?: number; rating?: number; overview?: string } | null>(null);
+  const [selectedSeries, setSelectedSeries] = useState<Series | null>(null);
 
   useEffect(() => {
     logger.info('home', 'Home page mounted');
@@ -91,7 +96,56 @@ export default function Home() {
   };
 
   const continueWatching = history.filter(v => v.progressPercent < 95);
-  const completed = history.filter(v => v.progressPercent >= 95);
+
+  // Group Continue Watching by series
+  const groupedContinueWatching = useMemo(() => {
+    const seriesMap = new Map<string, { series: Series; latestEpisode: VideoHistory; episodeInfo: { season: number; episode: number } }>();
+    const standaloneVideos: VideoHistory[] = [];
+
+    for (const video of continueWatching) {
+      // Find if this video belongs to a series
+      const matchingSeries = allSeries.find(s =>
+        s.episodes.some(ep => ep.url === video.url)
+      );
+
+      if (matchingSeries) {
+        const existing = seriesMap.get(matchingSeries.id);
+        const episode = matchingSeries.episodes.find(ep => ep.url === video.url);
+        const episodeInfo = {
+          season: episode?.season ?? 1,
+          episode: episode?.episodeNumber ?? (episode?.index ?? 0) + 1,
+        };
+
+        if (!existing || video.lastWatched.toMillis() > existing.latestEpisode.lastWatched.toMillis()) {
+          seriesMap.set(matchingSeries.id, { series: matchingSeries, latestEpisode: video, episodeInfo });
+        }
+      } else {
+        standaloneVideos.push(video);
+      }
+    }
+
+    return {
+      seriesItems: Array.from(seriesMap.values()),
+      standaloneVideos,
+    };
+  }, [continueWatching, allSeries]);
+
+  // Compute "My Movies" - standalone videos not in any series
+  const myMovies = useMemo(() => {
+    return history.filter(video => {
+      // Check if this video belongs to any series
+      const isInSeries = allSeries.some(s =>
+        s.episodes.some(ep => ep.url === video.url)
+      );
+      return !isInSeries;
+    });
+  }, [history, allSeries]);
+
+  // Handle episode selection from series modal
+  const handleEpisodeSelect = (episode: Episode) => {
+    handlePlayVideo(episode.url);
+    setSelectedSeries(null);
+  };
 
   return (
     <div className={`min-h-screen bg-sw-dark text-white transition-opacity duration-500 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
@@ -296,40 +350,100 @@ export default function Home() {
 
       {/* Content Rows */}
       <main className="relative z-30 -mt-32 pb-20 space-y-12">
-        {/* Continue Watching */}
-        {continueWatching.length > 0 && (
-          <VideoRow
-            title="Continue Watching"
-            videos={continueWatching}
-            onPlay={handlePlayVideo}
-            showProgress
-            userId={user?.uid}
-          />
+        {/* Continue Watching - grouped by series */}
+        {(groupedContinueWatching.seriesItems.length > 0 || groupedContinueWatching.standaloneVideos.length > 0) && (
+          <div className="relative group/row">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                Continue Watching
+                <svg className="w-5 h-5 text-sw-red opacity-0 group-hover/row:opacity-100 transform translate-x-0 group-hover/row:translate-x-1 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </h3>
+            </div>
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 sm:px-6 lg:px-8 pb-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+              {/* Series cards with continue info */}
+              {groupedContinueWatching.seriesItems.map(({ series, latestEpisode, episodeInfo }) => (
+                <SeriesCard
+                  key={series.id}
+                  series={series}
+                  onClick={() => setSelectedSeries(series)}
+                  onPlay={handlePlayVideo}
+                  continueUrl={latestEpisode.url}
+                  continueInfo={{
+                    season: episodeInfo.season,
+                    episode: episodeInfo.episode,
+                    title: latestEpisode.title,
+                    progressPercent: latestEpisode.progressPercent,
+                  }}
+                />
+              ))}
+              {/* Standalone video cards */}
+              {groupedContinueWatching.standaloneVideos.map((video) => (
+                <VideoCard
+                  key={video.id}
+                  video={video}
+                  onPlay={handlePlayVideo}
+                  showProgress
+                  userId={user?.uid}
+                />
+              ))}
+            </div>
+          </div>
         )}
 
-        {/* Recently Added / Completed */}
-        {completed.length > 0 && (
-          <VideoRow
-            title="Watch Again"
-            videos={completed}
-            onPlay={handlePlayVideo}
-            userId={user?.uid}
-          />
+        {/* My Series */}
+        {allSeries.length > 0 && (
+          <div className="relative group/row">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                My Series
+                <svg className="w-5 h-5 text-sw-red opacity-0 group-hover/row:opacity-100 transform translate-x-0 group-hover/row:translate-x-1 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </h3>
+            </div>
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 sm:px-6 lg:px-8 pb-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+              {allSeries.map(series => (
+                <SeriesCard
+                  key={series.id}
+                  series={series}
+                  onClick={() => setSelectedSeries(series)}
+                  onPlay={handlePlayVideo}
+                />
+              ))}
+            </div>
+          </div>
         )}
 
-        {/* All History */}
-        {history.length > 0 && (
-          <VideoRow
-            title="My History"
-            videos={history}
-            onPlay={handlePlayVideo}
-            showProgress
-            userId={user?.uid}
-          />
+        {/* My Movies - standalone videos not in any series */}
+        {myMovies.length > 0 && (
+          <div className="relative group/row">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                My Movies
+                <svg className="w-5 h-5 text-sw-red opacity-0 group-hover/row:opacity-100 transform translate-x-0 group-hover/row:translate-x-1 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </h3>
+            </div>
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 sm:px-6 lg:px-8 pb-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+              {myMovies.map((video) => (
+                <VideoCard
+                  key={video.id}
+                  video={video}
+                  onPlay={handlePlayVideo}
+                  showProgress
+                  userId={user?.uid}
+                />
+              ))}
+            </div>
+          </div>
         )}
+
 
         {/* Empty State */}
-        {!isHistoryLoading && history.length === 0 && (
+        {!isHistoryLoading && history.length === 0 && allSeries.length === 0 && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center py-20">
               <div className="w-24 h-24 mx-auto mb-6 bg-gray-800/50 rounded-full flex items-center justify-center">
@@ -359,106 +473,15 @@ export default function Home() {
           </div>
         </div>
       </footer>
-    </div>
-  );
-}
 
-// Video Row Component
-interface VideoRowProps {
-  title: string;
-  videos: VideoHistory[];
-  onPlay: (url: string) => void;
-  showProgress?: boolean;
-  userId?: string;
-}
-
-function VideoRow({ title, videos, onPlay, showProgress, userId }: VideoRowProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(true);
-
-  const checkScroll = () => {
-    if (scrollRef.current) {
-      const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
-      setCanScrollLeft(scrollLeft > 0);
-      setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 10);
-    }
-  };
-
-  const scroll = (direction: 'left' | 'right') => {
-    if (scrollRef.current) {
-      const scrollAmount = scrollRef.current.clientWidth * 0.8;
-      scrollRef.current.scrollBy({
-        left: direction === 'left' ? -scrollAmount : scrollAmount,
-        behavior: 'smooth'
-      });
-    }
-  };
-
-  useEffect(() => {
-    checkScroll();
-    window.addEventListener('resize', checkScroll);
-    return () => window.removeEventListener('resize', checkScroll);
-  }, [videos]);
-
-  return (
-    <div className="relative group/row">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-          {title}
-          <svg className="w-5 h-5 text-sw-red opacity-0 group-hover/row:opacity-100 transform translate-x-0 group-hover/row:translate-x-1 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </h3>
-      </div>
-
-      <div className="relative">
-        {/* Left Arrow */}
-        {canScrollLeft && (
-          <button
-            onClick={() => scroll('left')}
-            className="absolute left-0 top-0 bottom-0 z-10 w-12 bg-gradient-to-r from-sw-dark to-transparent flex items-center justify-start pl-2 opacity-0 group-hover/row:opacity-100 transition-opacity"
-          >
-            <div className="w-10 h-10 bg-black/80 rounded-full flex items-center justify-center hover:bg-black transition-colors">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </div>
-          </button>
-        )}
-
-        {/* Right Arrow */}
-        {canScrollRight && (
-          <button
-            onClick={() => scroll('right')}
-            className="absolute right-0 top-0 bottom-0 z-10 w-12 bg-gradient-to-l from-sw-dark to-transparent flex items-center justify-end pr-2 opacity-0 group-hover/row:opacity-100 transition-opacity"
-          >
-            <div className="w-10 h-10 bg-black/80 rounded-full flex items-center justify-center hover:bg-black transition-colors">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </button>
-        )}
-
-        {/* Scrollable Container */}
-        <div
-          ref={scrollRef}
-          onScroll={checkScroll}
-          className="flex gap-2 overflow-x-auto scrollbar-hide px-4 sm:px-6 lg:px-8 pb-4"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-        >
-          {videos.map((video) => (
-            <VideoCard
-              key={video.id}
-              video={video}
-              onPlay={onPlay}
-              showProgress={showProgress}
-              userId={userId}
-            />
-          ))}
-        </div>
-      </div>
+      {/* Series Detail Modal */}
+      <SeriesDetailModal
+        series={selectedSeries}
+        isOpen={!!selectedSeries}
+        onClose={() => setSelectedSeries(null)}
+        onEpisodeSelect={handleEpisodeSelect}
+        onDeleteSeries={removeSeries}
+      />
     </div>
   );
 }

@@ -300,6 +300,25 @@ export async function clearWatchHistory(userId: string): Promise<void> {
   }
 }
 
+/**
+ * Delete a single video from watch history
+ */
+export async function deleteVideoFromHistory(userId: string, videoUrl: string): Promise<void> {
+  const videoId = generateVideoId(videoUrl);
+
+  logger.info('firestore', 'DELETE_VIDEO_START', { userId, videoId });
+
+  try {
+    const db = getFirebaseDb();
+    await firestoreDeleteDoc(doc(db, 'users', userId, 'history', videoId));
+
+    logger.info('firestore', 'DELETE_VIDEO_SUCCESS', { videoId });
+  } catch (err) {
+    logger.error('firestore', 'DELETE_VIDEO_FAILED', { videoId, error: err });
+    throw err;
+  }
+}
+
 // ==================== SERIES OPERATIONS ====================
 
 /**
@@ -315,7 +334,7 @@ function generateSeriesId(): string {
 export async function createSeries(
   userId: string,
   name: string,
-  initialEpisode?: { url: string; title?: string }
+  initialEpisode?: { url: string; title?: string; season?: number; episodeNumber?: number }
 ): Promise<Series> {
   const seriesId = generateSeriesId();
 
@@ -329,6 +348,8 @@ export async function createSeries(
           url: initialEpisode.url,
           title: initialEpisode.title || extractTitleFromUrl(initialEpisode.url),
           index: 0,
+          season: initialEpisode.season ?? 1,
+          episodeNumber: initialEpisode.episodeNumber,
           completed: false,
         }]
       : [];
@@ -358,6 +379,28 @@ export async function createSeries(
 }
 
 /**
+ * Migrate episode to ensure it has season field (defaults to 1)
+ * and sort episodes by season then episodeNumber/index
+ */
+function migrateAndSortEpisodes(episodes: any[]): Episode[] {
+  return episodes
+    .map((ep: any) => ({
+      ...ep,
+      season: ep.season ?? 1,
+    }))
+    .sort((a, b) => {
+      // Sort by season first
+      if (a.season !== b.season) {
+        return a.season - b.season;
+      }
+      // Then by episodeNumber if available, otherwise by index
+      const aNum = a.episodeNumber ?? a.index;
+      const bNum = b.episodeNumber ?? b.index;
+      return aNum - bNum;
+    });
+}
+
+/**
  * Get a specific series by ID
  */
 export async function getSeries(userId: string, seriesId: string): Promise<Series | null> {
@@ -373,7 +416,7 @@ export async function getSeries(userId: string, seriesId: string): Promise<Serie
       const series: Series = {
         id: docSnap.id,
         name: data.name,
-        episodes: data.episodes || [],
+        episodes: migrateAndSortEpisodes(data.episodes || []),
         currentEpisodeIndex: data.currentEpisodeIndex || 0,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -411,7 +454,7 @@ export async function getAllSeries(userId: string): Promise<Series[]> {
       seriesList.push({
         id: docSnap.id,
         name: data.name,
-        episodes: data.episodes || [],
+        episodes: migrateAndSortEpisodes(data.episodes || []),
         currentEpisodeIndex: data.currentEpisodeIndex || 0,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -434,9 +477,11 @@ export async function addEpisodeToSeries(
   userId: string,
   seriesId: string,
   episodeUrl: string,
-  episodeTitle?: string
+  episodeTitle?: string,
+  season?: number,
+  episodeNumber?: number
 ): Promise<void> {
-  logger.info('firestore', 'ADD_EPISODE', { userId, seriesId, url: episodeUrl.substring(0, 50) + '...' });
+  logger.info('firestore', 'ADD_EPISODE', { userId, seriesId, url: episodeUrl.substring(0, 50) + '...', season, episodeNumber });
 
   try {
     const db = getFirebaseDb();
@@ -453,6 +498,8 @@ export async function addEpisodeToSeries(
       url: episodeUrl,
       title: episodeTitle || extractTitleFromUrl(episodeUrl),
       index: currentEpisodes.length,
+      season: season ?? 1,
+      episodeNumber: episodeNumber,
       completed: false,
     };
 

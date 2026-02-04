@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { extractTitleFromUrl, extractHost, formatTime } from '@/lib/utils';
+import { parseEpisodeInfo } from '@/lib/episodeParser';
 import { useVideoProgress } from '@/hooks/useVideoProgress';
 import { useSeries } from '@/hooks/useSeries';
 import { useAuth } from '@/hooks/useAuth';
@@ -12,6 +13,39 @@ import { Episode } from '@/types';
 import { fetchSubtitle, readSubtitleFile, createSubtitleBlobUrl } from '@/lib/subtitles';
 import { saveSubtitlePreference, getSubtitlePreference } from '@/lib/firestore';
 import { downloadSubtitle, extractSubtitleFromZip } from '@/lib/subtitleSearch';
+
+// Extract a clean title from a video URL using the episode parser, with fallback
+function getVideoTitle(url: string): string {
+  // Try episode parser first (series with S01E01 etc.)
+  const parsed = parseEpisodeInfo(url);
+  if (parsed) {
+    return parsed.title; // e.g., "Breaking Bad S01E01"
+  }
+
+  // Try movie title extraction (year-based: "Movie Name 2025 WEB-DL ...")
+  try {
+    const pathname = decodeURIComponent(new URL(url).pathname);
+    const filename = pathname.split('/').pop() || '';
+    const name = filename.replace(/\.[^.]+$/, '').replace(/[\._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const yearMatch = name.match(/^(.+?)\s+((?:19|20)\d{2})(?:\s|$)/);
+    if (yearMatch && yearMatch[1].trim().length > 0) {
+      return `${yearMatch[1].trim()} (${yearMatch[2]})`;
+    }
+  } catch { /* fall through */ }
+
+  return extractTitleFromUrl(url);
+}
+
+// Helper to safely call play() and ignore AbortError (expected when source changes)
+function safePlay(video: HTMLVideoElement | null): void {
+  if (!video) return;
+  video.play().catch((err) => {
+    // AbortError is expected when source changes during play - ignore it
+    if (err.name !== 'AbortError') {
+      console.error('Video play error:', err);
+    }
+  });
+}
 
 export default function Player() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -27,8 +61,18 @@ export default function Player() {
   const [showSubtitleModal, setShowSubtitleModal] = useState(false);
   const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
   const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [actionOverlay, setActionOverlay] = useState<{ type: 'play' | 'pause' | 'seekBack' | 'seekForward'; key: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const actionKeyRef = useRef(0);
 
   // Progress tracking hook
   const {
@@ -72,13 +116,13 @@ export default function Player() {
     if (url) {
       logger.info('player', 'VIDEO_LOAD', {
         url: url.substring(0, 80) + '...',
-        title: extractTitleFromUrl(url),
+        title: getVideoTitle(url),
         host: extractHost(url)
       });
       setVideoUrl(url);
-      setTitle(extractTitleFromUrl(url));
+      setTitle(getVideoTitle(url));
       setSourceHost(extractHost(url));
-      document.title = `${extractTitleFromUrl(url)} - StreamWatch`;
+      document.title = `${getVideoTitle(url)} - StreamWatch`;
     } else {
       logger.warn('player', 'NO_VIDEO_URL');
     }
@@ -93,6 +137,15 @@ export default function Player() {
       loadSeriesForVideo(videoUrl);
     }
   }, [videoUrl, loadSeriesForVideo]);
+
+  // Show a brief fading action overlay
+  const flashOverlay = useCallback((type: 'play' | 'pause' | 'seekBack' | 'seekForward') => {
+    actionKeyRef.current += 1;
+    setActionOverlay({ type, key: actionKeyRef.current });
+    setTimeout(() => {
+      setActionOverlay(prev => prev?.key === actionKeyRef.current ? null : prev);
+    }, 600);
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -110,9 +163,11 @@ export default function Player() {
         case 'k':
           e.preventDefault();
           if (video.paused) {
-            video.play();
+            safePlay(video);
+            flashOverlay('play');
           } else {
             video.pause();
+            flashOverlay('pause');
           }
           break;
 
@@ -121,7 +176,7 @@ export default function Player() {
           if (document.fullscreenElement) {
             document.exitFullscreen();
           } else {
-            videoRef.current?.requestFullscreen();
+            containerRef.current?.requestFullscreen();
           }
           break;
 
@@ -132,12 +187,14 @@ export default function Player() {
 
         case 'arrowleft':
           e.preventDefault();
-          video.currentTime = Math.max(0, video.currentTime - 10);
+          video.currentTime = Math.max(0, video.currentTime - 15);
+          flashOverlay('seekBack');
           break;
 
         case 'arrowright':
           e.preventDefault();
-          video.currentTime = Math.min(video.duration, video.currentTime + 10);
+          video.currentTime = Math.min(video.duration, video.currentTime + 15);
+          flashOverlay('seekForward');
           break;
 
         case 'arrowup':
@@ -152,12 +209,14 @@ export default function Player() {
 
         case 'j':
           e.preventDefault();
-          video.currentTime = Math.max(0, video.currentTime - 10);
+          video.currentTime = Math.max(0, video.currentTime - 15);
+          flashOverlay('seekBack');
           break;
 
         case 'l':
           e.preventDefault();
-          video.currentTime = Math.min(video.duration, video.currentTime + 10);
+          video.currentTime = Math.min(video.duration, video.currentTime + 15);
+          flashOverlay('seekForward');
           break;
 
         case '0':
@@ -222,8 +281,16 @@ export default function Player() {
       }
     };
 
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
   }, [subtitles, activeSubtitleIndex]);
 
   // Navigate to new video
@@ -236,9 +303,9 @@ export default function Player() {
 
     // Update state
     setVideoUrl(url);
-    setTitle(episodeTitle || extractTitleFromUrl(url));
+    setTitle(episodeTitle || getVideoTitle(url));
     setSourceHost(extractHost(url));
-    document.title = `${episodeTitle || extractTitleFromUrl(url)} - StreamWatch`;
+    document.title = `${episodeTitle || getVideoTitle(url)} - StreamWatch`;
     setShowNextEpisode(false);
     setIsLoading(true);
     setCurrentTime(0);
@@ -247,7 +314,7 @@ export default function Player() {
     // Load video
     if (videoRef.current) {
       videoRef.current.load();
-      videoRef.current.play();
+      safePlay(videoRef.current);
     }
   }, []);
 
@@ -324,7 +391,7 @@ export default function Player() {
     setShowNextEpisode(false);
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
-      videoRef.current.play();
+      safePlay(videoRef.current);
     }
   }, []);
 
@@ -338,7 +405,7 @@ export default function Player() {
     logger.info('player', 'USER_RESUME', { resumeAt: Math.round(time), formatted: formatTime(time) });
     if (videoRef.current) {
       videoRef.current.currentTime = time;
-      videoRef.current.play();
+      safePlay(videoRef.current);
     }
   }, [acceptResume]);
 
@@ -347,13 +414,13 @@ export default function Player() {
     dismissResumePrompt();
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
-      videoRef.current.play();
+      safePlay(videoRef.current);
     }
   }, [dismissResumePrompt]);
 
-  const handleAddToSeries = useCallback(async (seriesId: string) => {
+  const handleAddToSeries = useCallback(async (seriesId: string, season?: number, episodeNumber?: number) => {
     if (videoUrl) {
-      await addToSeries(seriesId, videoUrl, title);
+      await addToSeries(seriesId, videoUrl, title, season, episodeNumber);
       await refreshSeries();
       // Reload series context
       await loadSeriesForVideo(videoUrl);
@@ -364,8 +431,8 @@ export default function Player() {
     return createNewSeries(name);
   }, [createNewSeries]);
 
-  const handleAddEpisodeToSeries = useCallback(async (seriesId: string, url: string, episodeTitle: string) => {
-    await addToSeries(seriesId, url, episodeTitle);
+  const handleAddEpisodeToSeries = useCallback(async (seriesId: string, url: string, episodeTitle: string, season?: number, episodeNumber?: number) => {
+    await addToSeries(seriesId, url, episodeTitle, season, episodeNumber);
   }, [addToSeries]);
 
   const handleDeleteSeries = useCallback(async (seriesId: string) => {
@@ -538,104 +605,242 @@ export default function Player() {
   }
 
   return (
-    <div className={`min-h-screen bg-sw-dark text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
-      {/* Video Player Container */}
-      <div ref={containerRef} className="relative w-full bg-black">
-        {/* Loading Overlay */}
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
-            <div className="text-center">
-              <div className="w-12 h-12 border-4 border-sw-red/30 border-t-sw-red rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-sw-light-gray text-sm">Loading video...</p>
-            </div>
-          </div>
-        )}
-
-        {/* Resume Prompt Overlay */}
-        {showResumePrompt && !isLoading && !showNextEpisode && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-20">
-            <div className="bg-gray-900/95 rounded-2xl p-6 max-w-sm mx-4 border border-gray-700/50 shadow-2xl animate-fade-in">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 mx-auto bg-sw-red/20 rounded-full flex items-center justify-center mb-4">
-                  <svg className="w-8 h-8 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <h3 className="text-xl font-bold text-white mb-2">Resume Watching?</h3>
-                <p className="text-sw-gray text-sm">
-                  You left off at <span className="text-sw-red font-medium">{formatTime(resumeTime)}</span>
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleStartFromBeginning}
-                  className="flex-1 py-3 px-4 bg-gray-800 text-white rounded-lg font-medium hover:bg-gray-700 active:scale-95 transition-all duration-200"
-                >
-                  Start Over
-                </button>
-                <button
-                  onClick={handleResume}
-                  className="flex-1 py-3 px-4 bg-sw-red text-white rounded-lg font-medium hover:bg-red-600 active:scale-95 transition-all duration-200 shadow-lg shadow-sw-red/20"
-                >
-                  Resume
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Next Episode Overlay */}
-        {currentSeries && (
-          <NextEpisodeOverlay
-            series={currentSeries}
-            currentEpisodeIndex={currentEpisodeIndex}
-            isVisible={showNextEpisode}
-            autoplayDelay={5}
-            onPlayNext={handlePlayNext}
-            onCancel={() => setShowNextEpisode(false)}
-            onReplay={handleReplay}
-          />
-        )}
-
-        <video
-          ref={videoRef}
-          src={videoUrl}
-          controls
-          autoPlay
-          className="w-full max-h-[80vh] mx-auto"
-          onTimeUpdate={handleTimeUpdate}
-          onLoadedMetadata={handleLoadedMetadata}
-          onCanPlay={() => setIsLoading(false)}
-          onEnded={handleVideoEnded}
+    <div className={`h-screen overflow-hidden flex bg-sw-dark text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
+      {/* Left Panel - Video Player */}
+      <div className="flex-1 flex items-center justify-center bg-black relative min-w-0">
+        {/* Video + Custom Controls wrapper */}
+        <div
+          ref={containerRef}
+          className={`relative group/player bg-black w-full h-full flex items-center justify-center ${isFullscreen ? 'w-screen h-screen' : ''}`}
+          onMouseMove={() => {
+            setShowControls(true);
+            if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+            controlsTimeoutRef.current = setTimeout(() => {
+              if (isPlaying) setShowControls(false);
+            }, 3000);
+          }}
+          onMouseLeave={() => { if (isPlaying) setShowControls(false); }}
         >
-          {subtitles.map((sub, index) => (
-            <track
-              key={`${sub.src}-${index}`}
-              kind="subtitles"
-              label={sub.label}
-              src={sub.src}
-              default={activeSubtitleIndex === index}
+          {/* Loading Overlay */}
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+              <div className="text-center">
+                <div className="w-12 h-12 border-4 border-sw-red/30 border-t-sw-red rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-sw-light-gray text-sm">Loading video...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Resume Prompt Overlay */}
+          {showResumePrompt && !isLoading && !showNextEpisode && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-20">
+              <div className="bg-gray-900/95 rounded-2xl p-6 max-w-sm mx-4 border border-gray-700/50 shadow-2xl animate-fade-in">
+                <div className="text-center mb-6">
+                  <div className="w-16 h-16 mx-auto bg-sw-red/20 rounded-full flex items-center justify-center mb-4">
+                    <svg className="w-8 h-8 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">Resume Watching?</h3>
+                  <p className="text-sw-gray text-sm">
+                    You left off at <span className="text-sw-red font-medium">{formatTime(resumeTime)}</span>
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleStartFromBeginning}
+                    className="flex-1 py-3 px-4 bg-gray-800 text-white rounded-lg font-medium hover:bg-gray-700 active:scale-95 transition-all duration-200"
+                  >
+                    Start Over
+                  </button>
+                  <button
+                    onClick={handleResume}
+                    className="flex-1 py-3 px-4 bg-sw-red text-white rounded-lg font-medium hover:bg-red-600 active:scale-95 transition-all duration-200 shadow-lg shadow-sw-red/20"
+                  >
+                    Resume
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Next Episode Overlay */}
+          {currentSeries && (
+            <NextEpisodeOverlay
+              series={currentSeries}
+              currentEpisodeIndex={currentEpisodeIndex}
+              isVisible={showNextEpisode}
+              autoplayDelay={5}
+              onPlayNext={handlePlayNext}
+              onCancel={() => setShowNextEpisode(false)}
+              onReplay={handleReplay}
             />
-          ))}
-          Your browser does not support the video tag.
-        </video>
+          )}
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            autoPlay
+            className={`max-w-full max-h-full ${isFullscreen ? 'w-full h-full object-contain' : ''} ${showControls || !isPlaying ? 'cursor-pointer' : 'cursor-none'}`}
+            onClick={() => {
+              if (clickTimeoutRef.current) { clearTimeout(clickTimeoutRef.current); clickTimeoutRef.current = null; return; }
+              clickTimeoutRef.current = setTimeout(() => {
+                clickTimeoutRef.current = null;
+                const v = videoRef.current;
+                if (!v) return;
+                if (v.paused) { safePlay(v); flashOverlay('play'); } else { v.pause(); flashOverlay('pause'); }
+              }, 200);
+            }}
+            onDoubleClick={() => {
+              if (clickTimeoutRef.current) { clearTimeout(clickTimeoutRef.current); clickTimeoutRef.current = null; }
+              if (document.fullscreenElement) document.exitFullscreen();
+              else containerRef.current?.requestFullscreen();
+            }}
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleLoadedMetadata}
+            onCanPlay={() => setIsLoading(false)}
+            onEnded={handleVideoEnded}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onVolumeChange={() => {
+              const v = videoRef.current;
+              if (v) { setVolume(v.volume); setIsMuted(v.muted); }
+            }}
+          >
+            {subtitles.map((sub, index) => (
+              <track
+                key={`${sub.src}-${index}`}
+                kind="subtitles"
+                label={sub.label}
+                src={sub.src}
+                default={activeSubtitleIndex === index}
+              />
+            ))}
+            Your browser does not support the video tag.
+          </video>
+
+          {/* Title Overlay (top gradient, hidden in fullscreen) */}
+          {!isFullscreen && (
+            <div className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-24 pt-6 px-8 pointer-events-none transition-opacity duration-300 z-10 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
+              <h1 className="text-white text-[60px] font-bold leading-none drop-shadow-lg" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
+              <p className="text-white/50 text-lg mt-2 drop-shadow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sourceHost}</p>
+            </div>
+          )}
+
+          {/* Action overlay (fading play/pause/seek indicator) */}
+          {actionOverlay && (
+            <div key={actionOverlay.key} className="absolute inset-0 flex items-center justify-center pointer-events-none animate-action-flash">
+              <div className="w-20 h-20 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-sm">
+                {actionOverlay.type === 'play' && (
+                  <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                )}
+                {actionOverlay.type === 'pause' && (
+                  <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                )}
+                {actionOverlay.type === 'seekBack' && (
+                  <div className="relative flex items-center justify-center">
+                    <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                    <span className="absolute text-white text-[10px] font-bold mt-1">15</span>
+                  </div>
+                )}
+                {actionOverlay.type === 'seekForward' && (
+                  <div className="relative flex items-center justify-center">
+                    <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
+                    <span className="absolute text-white text-[10px] font-bold mt-1">15</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Custom Controls */}
+          <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-16 pb-3 px-4 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            {/* Progress Bar */}
+            <div
+              ref={progressBarRef}
+              className="group/prog w-full h-1.5 bg-white/20 rounded-full cursor-pointer mb-3 hover:h-3 transition-all"
+              onClick={(e) => {
+                const bar = progressBarRef.current;
+                const video = videoRef.current;
+                if (!bar || !video) return;
+                const rect = bar.getBoundingClientRect();
+                const pct = (e.clientX - rect.left) / rect.width;
+                video.currentTime = pct * video.duration;
+              }}
+            >
+              <div className="h-full bg-sw-red rounded-full relative" style={{ width: `${progressPercent}%` }}>
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-sw-red rounded-full opacity-0 group-hover/prog:opacity-100 transition-opacity shadow-md" />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {/* Play/Pause */}
+              <button className="text-white hover:text-sw-red transition-colors" onClick={() => { const v = videoRef.current; if (!v) return; if (v.paused) { safePlay(v); flashOverlay('play'); } else { v.pause(); flashOverlay('pause'); } }}>
+                {isPlaying
+                  ? <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  : <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                }
+              </button>
+
+              {/* Skip Back 15s */}
+              <button className="text-white hover:text-sw-red transition-colors relative" title="Back 15s" onClick={() => { if (videoRef.current) { videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 15); flashOverlay('seekBack'); } }}>
+                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[40%] text-[7px] font-bold">15</span>
+              </button>
+
+              {/* Skip Forward 15s */}
+              <button className="text-white hover:text-sw-red transition-colors relative" title="Forward 15s" onClick={() => { if (videoRef.current) { videoRef.current.currentTime = Math.min(videoRef.current.duration, videoRef.current.currentTime + 15); flashOverlay('seekForward'); } }}>
+                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
+                <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[40%] text-[7px] font-bold">15</span>
+              </button>
+
+              {/* Time */}
+              <span className="text-white text-sm font-mono tabular-nums">{formatTime(currentTime)} / {formatTime(duration)}</span>
+
+              <div className="flex-1" />
+
+              {/* Volume */}
+              <div className="flex items-center gap-2 group/vol">
+                <button className="text-white hover:text-sw-red transition-colors" onClick={() => { if (videoRef.current) videoRef.current.muted = !videoRef.current.muted; }}>
+                  {isMuted || volume === 0
+                    ? <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
+                    : volume < 0.5
+                    ? <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072" /></svg>
+                    : <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728" /></svg>
+                  }
+                </button>
+                <input type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
+                  onChange={(e) => { const val = parseFloat(e.target.value); if (videoRef.current) { videoRef.current.volume = val; videoRef.current.muted = val === 0; } }}
+                  className="w-0 group-hover/vol:w-20 transition-all duration-200 accent-sw-red cursor-pointer"
+                />
+              </div>
+
+              {/* Fullscreen */}
+              <button className="text-white hover:text-sw-red transition-colors" onClick={() => { if (document.fullscreenElement) document.exitFullscreen(); else containerRef.current?.requestFullscreen(); }}>
+                {isFullscreen
+                  ? <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" /></svg>
+                  : <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Video Info Section */}
-      <div className={`p-6 max-w-5xl mx-auto transition-all duration-500 delay-200 ${!isLoading ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+      {/* Right Panel - Info & Controls */}
+      <div className={`w-[320px] flex-shrink-0 bg-sw-dark flex flex-col p-5 border-l border-gray-800 overflow-y-auto transition-all duration-500 ${!isLoading ? 'opacity-100' : 'opacity-50'}`}>
         {/* Series Badge & Navigation */}
         {currentSeries && (
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4">
             <button
               onClick={() => setShowSidebar(true)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-sw-red/20 text-sw-red rounded-full text-sm font-medium hover:bg-sw-red/30 transition-colors"
+              className="w-full flex items-center gap-2 px-3 py-2 bg-sw-red/20 text-sw-red rounded-lg text-sm font-medium hover:bg-sw-red/30 transition-colors mb-2"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
-              {currentSeries.name}
-              <span className="text-white/70">({currentEpisodeIndex + 1}/{currentSeries.episodes.length})</span>
+              <span className="truncate">{currentSeries.name}</span>
+              <span className="text-white/70 flex-shrink-0">({currentEpisodeIndex + 1}/{currentSeries.episodes.length})</span>
             </button>
 
             {/* Episode Navigation */}
@@ -643,20 +848,22 @@ export default function Player() {
               <button
                 onClick={handlePlayPrevious}
                 disabled={!hasPreviousEpisode}
-                className="p-2 rounded-lg bg-gray-800 text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gray-800 text-white text-xs disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
                 title="Previous episode"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
+                Previous
               </button>
               <button
                 onClick={handlePlayNext}
                 disabled={!hasNextEpisode}
-                className="p-2 rounded-lg bg-gray-800 text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gray-800 text-white text-xs disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
                 title="Next episode"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                Next
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </button>
@@ -664,40 +871,14 @@ export default function Player() {
           </div>
         )}
 
-        {/* Title & Source */}
-        <div className="mb-6">
-          <h1 className="text-2xl md:text-3xl font-bold text-white mb-2 leading-tight">{title}</h1>
-          <div className="flex items-center gap-2 text-sm">
-            <svg className="w-4 h-4 text-sw-gray" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-            </svg>
-            <span className="text-sw-gray">Source:</span>
-            <span className="text-sw-light-gray">{sourceHost}</span>
-          </div>
-        </div>
-
-        {/* Progress Card */}
-        {duration > 0 && (
-          <div className="bg-gray-800/50 rounded-xl p-4 mb-6 backdrop-blur-sm border border-gray-700/50">
-            <div className="flex justify-between text-sm mb-3">
-              <span className="text-white font-medium">{formatTime(currentTime)}</span>
-              <span className="text-sw-red font-medium">{progressPercent}% watched</span>
-              <span className="text-sw-gray">{formatTime(duration)}</span>
-            </div>
-            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-sw-red to-red-500 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-        )}
+        {/* Divider */}
+        <div className="h-px bg-gray-800 mb-4" />
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-col gap-2">
           <button
             onClick={() => setShowAddModal(true)}
-            className="group flex items-center gap-2 py-3 px-5 bg-sw-red text-white rounded-lg font-medium hover:bg-red-600 active:scale-95 transition-all duration-200 shadow-lg shadow-sw-red/20"
+            className="group flex items-center gap-2 py-2.5 px-4 bg-sw-red text-white rounded-lg font-medium text-sm hover:bg-red-600 active:scale-[0.98] transition-all duration-200 shadow-lg shadow-sw-red/20"
           >
             <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -708,7 +889,7 @@ export default function Player() {
           {currentSeries && (
             <button
               onClick={() => setShowSidebar(true)}
-              className="group flex items-center gap-2 py-3 px-5 bg-gray-800 text-white rounded-lg font-medium hover:bg-gray-700 active:scale-95 transition-all duration-200 border border-gray-700"
+              className="group flex items-center gap-2 py-2.5 px-4 bg-gray-800 text-white rounded-lg font-medium text-sm hover:bg-gray-700 active:scale-[0.98] transition-all duration-200 border border-gray-700"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
@@ -719,7 +900,7 @@ export default function Player() {
 
           <button
             onClick={() => setShowSubtitleModal(true)}
-            className={`group flex items-center gap-2 py-3 px-5 rounded-lg font-medium active:scale-95 transition-all duration-200 border ${
+            className={`group flex items-center gap-2 py-2.5 px-4 rounded-lg font-medium text-sm active:scale-[0.98] transition-all duration-200 border ${
               subtitles.length > 0
                 ? 'bg-sw-red/20 text-sw-red border-sw-red/30 hover:bg-sw-red/30'
                 : 'bg-gray-800 text-white border-gray-700 hover:bg-gray-700'
@@ -730,32 +911,34 @@ export default function Player() {
             </svg>
             Subtitles
             {subtitles.length > 0 && (
-              <span className="text-xs bg-sw-red/30 px-1.5 py-0.5 rounded">
+              <span className="text-xs bg-sw-red/30 px-1.5 py-0.5 rounded ml-auto">
                 {activeSubtitleIndex !== null ? 'ON' : 'OFF'}
               </span>
             )}
           </button>
 
-          <button className="group flex items-center gap-2 py-3 px-5 bg-gray-800/50 text-sw-light-gray rounded-lg font-medium hover:bg-gray-800 hover:text-white active:scale-95 transition-all duration-200 border border-gray-700/50">
+          <button className="group flex items-center gap-2 py-2.5 px-4 bg-gray-800/50 text-sw-light-gray rounded-lg font-medium text-sm hover:bg-gray-800 hover:text-white active:scale-[0.98] transition-all duration-200 border border-gray-700/50">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
             </svg>
             Share
           </button>
         </div>
-      </div>
 
-      {/* Footer */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-sw-dark to-transparent pointer-events-none">
-        <div className="max-w-5xl mx-auto flex justify-between items-center text-xs text-sw-gray">
-          <span>StreamWatch</span>
-          <span className="flex gap-4">
-            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">Space</kbd> Play/Pause</span>
-            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">F</kbd> Fullscreen</span>
-            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">M</kbd> Mute</span>
-            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">C</kbd> Subtitles</span>
-            <span><kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">←→</kbd> Seek 10s</span>
-          </span>
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Keyboard Hints */}
+        <div className="pt-4 border-t border-gray-800 mt-4">
+          <p className="text-[10px] text-sw-gray uppercase tracking-wider mb-2">Keyboard Shortcuts</p>
+          <div className="grid grid-cols-2 gap-1.5 text-[11px] text-sw-gray">
+            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">Space</kbd> Play/Pause</span>
+            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">F</kbd> Fullscreen</span>
+            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">M</kbd> Mute</span>
+            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">C</kbd> Subtitles</span>
+            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">←→</kbd> Seek 15s</span>
+            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">↑↓</kbd> Volume</span>
+          </div>
         </div>
       </div>
 

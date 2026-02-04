@@ -2,14 +2,20 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useSeries } from '@/hooks/useSeries';
 import { useSettings } from '@/hooks/useSettings';
+import { useRecentHistory } from '@/hooks/useRecentHistory';
+import { formatTime } from '@/lib/utils';
 
 export default function Settings() {
   const { user, isLoading: isAuthLoading, error: authError, signIn, logOut } = useAuth();
   const { allSeries, removeSeries, refresh: refreshSeries } = useSeries();
   const { settings, updateSettings, isLoading: isSettingsLoading } = useSettings();
+  const { history, clearHistory, deleteVideo } = useRecentHistory(50);
   const [isReady, setIsReady] = useState(false);
   const [deletingSeriesId, setDeletingSeriesId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
+  const [deletingVideoUrl, setDeletingVideoUrl] = useState<string | null>(null);
 
   const handleDeleteSeries = async (seriesId: string) => {
     setDeletingSeriesId(seriesId);
@@ -19,6 +25,25 @@ export default function Settings() {
     } finally {
       setDeletingSeriesId(null);
       setConfirmDeleteId(null);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    setIsClearingHistory(true);
+    try {
+      await clearHistory();
+    } finally {
+      setIsClearingHistory(false);
+      setShowClearHistoryConfirm(false);
+    }
+  };
+
+  const handleDeleteVideo = async (videoUrl: string) => {
+    setDeletingVideoUrl(videoUrl);
+    try {
+      await deleteVideo(videoUrl);
+    } finally {
+      setDeletingVideoUrl(null);
     }
   };
 
@@ -359,6 +384,122 @@ export default function Settings() {
           </div>
         </section>
 
+        {/* Watch History Section */}
+        {user && (
+          <section className="mb-6">
+            <h2 className="text-xs font-semibold text-sw-light-gray uppercase tracking-wider mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Watch History
+              <span className="text-sw-gray font-normal">({history.length} videos)</span>
+            </h2>
+            <div className="bg-gray-800/30 rounded-xl p-5 border border-gray-700/30">
+              {history.length === 0 ? (
+                <div className="text-center py-6">
+                  <svg className="w-12 h-12 mx-auto text-sw-gray/50 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-sw-gray text-sm">No watch history</p>
+                  <p className="text-sw-gray/70 text-xs mt-1">Videos you watch will appear here</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {history.map((video) => (
+                    <div key={video.id} className="flex items-center gap-3 p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 transition-colors group">
+                      {/* Thumbnail / Progress indicator */}
+                      <div className="relative w-16 h-10 bg-gray-700 rounded flex-shrink-0 overflow-hidden">
+                        {video.posterUrl ? (
+                          <img src={video.posterUrl} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <svg className="w-5 h-5 text-sw-gray" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M8 5v14l11-7z"/>
+                            </svg>
+                          </div>
+                        )}
+                        {/* Progress bar */}
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-600">
+                          <div
+                            className="h-full bg-sw-red"
+                            style={{ width: `${video.progressPercent}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Video info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">
+                          {video.mediaTitle || video.title}
+                        </p>
+                        <p className="text-xs text-sw-gray">
+                          {formatTime(video.duration)} • {video.progressPercent}% watched
+                          {video.completed && <span className="text-green-500 ml-1">✓</span>}
+                        </p>
+                      </div>
+
+                      {/* Delete button */}
+                      <button
+                        onClick={() => handleDeleteVideo(video.url)}
+                        disabled={deletingVideoUrl === video.url}
+                        className="p-2 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 rounded-lg transition-all disabled:opacity-50"
+                        title="Remove from history"
+                      >
+                        {deletingVideoUrl === video.url ? (
+                          <div className="w-4 h-4 border-2 border-sw-gray/30 border-t-sw-gray rounded-full animate-spin" />
+                        ) : (
+                          <svg className="w-4 h-4 text-sw-gray hover:text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Clear all button at bottom */}
+              {history.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-700/50">
+                  {showClearHistoryConfirm ? (
+                    <div className="flex items-center gap-2">
+                      <p className="flex-1 text-sm text-yellow-500">Clear all {history.length} videos?</p>
+                      <button
+                        onClick={() => setShowClearHistoryConfirm(false)}
+                        disabled={isClearingHistory}
+                        className="px-3 py-1.5 text-xs bg-gray-600 rounded hover:bg-gray-500 transition-colors disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleClearHistory}
+                        disabled={isClearingHistory}
+                        className="px-3 py-1.5 text-xs bg-red-600 rounded hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {isClearingHistory ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            Clearing...
+                          </>
+                        ) : (
+                          'Clear All'
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setShowClearHistoryConfirm(true)}
+                      className="text-sm text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      Clear all history
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* Data Section */}
         <section className="mb-8">
           <h2 className="text-xs font-semibold text-sw-light-gray uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -368,20 +509,28 @@ export default function Settings() {
             Data Management
           </h2>
           <div className="bg-gray-800/30 rounded-xl p-5 border border-gray-700/30 space-y-3">
-            <button className="w-full py-3 px-4 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-all duration-200 text-sm font-medium text-left flex items-center gap-3 group">
+            <button
+              onClick={() => setShowClearHistoryConfirm(true)}
+              disabled={!user || history.length === 0}
+              className="w-full py-3 px-4 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-all duration-200 text-sm font-medium text-left flex items-center gap-3 group disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <svg className="w-5 h-5 text-sw-gray group-hover:text-sw-light-gray transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="flex-1 text-sw-light-gray group-hover:text-white transition-colors">Clear Watch History</span>
+              <span className="flex-1 text-sw-light-gray group-hover:text-white transition-colors">
+                Clear Watch History {history.length > 0 && `(${history.length})`}
+              </span>
               <svg className="w-4 h-4 text-sw-gray opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
-            <button className="w-full py-3 px-4 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-all duration-200 text-sm font-medium text-left flex items-center gap-3 group">
+            <button className="w-full py-3 px-4 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-all duration-200 text-sm font-medium text-left flex items-center gap-3 group disabled:opacity-50 disabled:cursor-not-allowed" disabled={allSeries.length === 0}>
               <svg className="w-5 h-5 text-sw-gray group-hover:text-sw-light-gray transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
-              <span className="flex-1 text-sw-light-gray group-hover:text-white transition-colors">Clear All Series</span>
+              <span className="flex-1 text-sw-light-gray group-hover:text-white transition-colors">
+                Clear All Series {allSeries.length > 0 && `(${allSeries.length})`}
+              </span>
               <svg className="w-4 h-4 text-sw-gray opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>

@@ -1,6 +1,13 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Series, Episode } from '@/types';
 import { formatTime } from '@/lib/utils';
+
+interface SeasonGroup {
+  season: number;
+  episodes: Episode[];
+  watchedCount: number;
+  totalDuration: number;
+}
 
 interface SeriesSidebarProps {
   series: Series;
@@ -22,6 +29,68 @@ export default function SeriesSidebar({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  // null = show seasons list, number = show episodes for that season
+  const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+
+  // Group episodes by season
+  const seasonGroups = useMemo((): SeasonGroup[] => {
+    const groups = new Map<number, Episode[]>();
+
+    series.episodes.forEach(ep => {
+      const season = ep.season ?? 1;
+      if (!groups.has(season)) {
+        groups.set(season, []);
+      }
+      groups.get(season)!.push(ep);
+    });
+
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([season, episodes]) => {
+        const sortedEpisodes = episodes.sort((a, b) =>
+          (a.episodeNumber ?? a.index) - (b.episodeNumber ?? b.index)
+        );
+        return {
+          season,
+          episodes: sortedEpisodes,
+          watchedCount: sortedEpisodes.filter(ep => ep.completed).length,
+          totalDuration: sortedEpisodes.reduce((sum, ep) => sum + (ep.duration || 0), 0),
+        };
+      });
+  }, [series.episodes]);
+
+  // Get unique season count
+  const seasonCount = seasonGroups.length;
+
+  // Get current episode's season
+  const currentEpisode = series.episodes[currentEpisodeIndex];
+  const currentSeasonNumber = currentEpisode?.season ?? 1;
+
+  // Auto-select season if only one exists, or go to current episode's season
+  useEffect(() => {
+    if (isOpen) {
+      if (seasonCount === 1) {
+        // Only one season, go directly to episodes
+        setSelectedSeason(seasonGroups[0].season);
+      } else {
+        // Multiple seasons, show seasons list first
+        setSelectedSeason(null);
+      }
+    }
+  }, [isOpen, seasonCount, seasonGroups]);
+
+  // Get episodes for selected season
+  const selectedSeasonGroup = selectedSeason !== null
+    ? seasonGroups.find(g => g.season === selectedSeason)
+    : null;
+
+  const handleBackToSeasons = () => {
+    setSelectedSeason(null);
+  };
+
+  const handleSelectSeason = (season: number) => {
+    setSelectedSeason(season);
+  };
 
   return (
     <>
@@ -43,9 +112,24 @@ export default function SeriesSidebar({
         <div className="p-4 border-b border-gray-700/50">
           <div className="flex items-center justify-between">
             <div className="flex-1 min-w-0">
+              {/* Back button when viewing a season */}
+              {selectedSeason !== null && seasonCount > 1 && (
+                <button
+                  onClick={handleBackToSeasons}
+                  className="flex items-center gap-1 text-sw-gray hover:text-white mb-1 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span className="text-xs">All Seasons</span>
+                </button>
+              )}
               <h2 className="text-lg font-bold text-white truncate">{series.name}</h2>
               <p className="text-sm text-sw-gray">
-                {series.episodes.length} episode{series.episodes.length !== 1 ? 's' : ''}
+                {selectedSeason !== null
+                  ? `Season ${selectedSeason} • ${selectedSeasonGroup?.episodes.length || 0} episodes`
+                  : `${seasonCount} season${seasonCount !== 1 ? 's' : ''} • ${series.episodes.length} episodes`
+                }
               </p>
             </div>
             <div className="flex items-center gap-1 ml-2">
@@ -113,92 +197,172 @@ export default function SeriesSidebar({
           )}
         </div>
 
-        {/* Episodes List */}
+        {/* Content */}
         <div className="overflow-y-auto h-[calc(100%-80px)] p-2">
-          {series.episodes.map((episode, index) => {
-            const isPlaying = index === currentEpisodeIndex;
-            const isHovered = index === hoveredIndex;
-            const progress = episode.progress && episode.duration
-              ? Math.round((episode.progress / episode.duration) * 100)
-              : 0;
+          {selectedSeason === null ? (
+            /* Seasons List View */
+            <div className="space-y-2">
+              {seasonGroups.map(({ season, episodes: seasonEpisodes, watchedCount, totalDuration }) => {
+                const isCurrentSeason = season === currentSeasonNumber;
+                const progress = seasonEpisodes.length > 0
+                  ? Math.round((watchedCount / seasonEpisodes.length) * 100)
+                  : 0;
 
-            return (
-              <button
-                key={`${episode.url}-${index}`}
-                onClick={() => onEpisodeSelect(episode)}
-                onMouseEnter={() => setHoveredIndex(index)}
-                onMouseLeave={() => setHoveredIndex(null)}
-                className={`w-full p-3 rounded-lg mb-1 text-left transition-all duration-200 ${
-                  isPlaying
-                    ? 'bg-sw-red/20 border border-sw-red/50'
-                    : isHovered
-                    ? 'bg-gray-800/80'
-                    : 'bg-transparent hover:bg-gray-800/50'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {/* Episode Number / Playing Indicator */}
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    isPlaying ? 'bg-sw-red' : 'bg-gray-700'
-                  }`}>
-                    {isPlaying ? (
-                      <svg className="w-4 h-4 text-white animate-pulse" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z"/>
-                      </svg>
-                    ) : (
-                      <span className="text-sm font-medium text-white">{index + 1}</span>
-                    )}
-                  </div>
-
-                  {/* Episode Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${
-                      isPlaying ? 'text-white' : 'text-sw-light-gray'
-                    }`}>
-                      {episode.title}
-                    </p>
-
-                    {/* Meta Info */}
-                    <div className="flex items-center gap-2 mt-1 text-xs">
-                      {episode.duration ? (
-                        <span className="text-sw-gray">{formatTime(episode.duration)}</span>
-                      ) : null}
-
-                      {episode.completed ? (
-                        <span className="text-green-500 flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                          Watched
-                        </span>
-                      ) : progress > 0 ? (
-                        <span className="text-sw-red">{progress}%</span>
-                      ) : null}
-                    </div>
-
-                    {/* Progress Bar */}
-                    {!episode.completed && progress > 0 && (
-                      <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-sw-red rounded-full transition-all"
-                          style={{ width: `${progress}%` }}
-                        />
+                return (
+                  <button
+                    key={season}
+                    onClick={() => handleSelectSeason(season)}
+                    className={`w-full p-4 rounded-lg text-left transition-all ${
+                      isCurrentSeason
+                        ? 'bg-sw-red/20 border border-sw-red/50'
+                        : 'bg-gray-800/50 hover:bg-gray-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-medium text-white">
+                            Season {season}
+                          </span>
+                          {isCurrentSeason && (
+                            <span className="text-xs bg-sw-red text-white px-2 py-0.5 rounded">
+                              Current
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-sw-gray">
+                          <span>{seasonEpisodes.length} episode{seasonEpisodes.length !== 1 ? 's' : ''}</span>
+                          {totalDuration > 0 && (
+                            <span>{formatTime(totalDuration)}</span>
+                          )}
+                          {watchedCount > 0 && (
+                            <span className="text-green-500">
+                              {watchedCount}/{seasonEpisodes.length} watched
+                            </span>
+                          )}
+                        </div>
+                        {/* Progress bar */}
+                        {progress > 0 && progress < 100 && (
+                          <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-sw-red rounded-full transition-all"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        )}
+                        {progress === 100 && (
+                          <div className="mt-2 flex items-center gap-1 text-xs text-green-500">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Completed
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-
-                  {/* Play on hover */}
-                  {isHovered && !isPlaying && (
-                    <div className="flex-shrink-0">
-                      <svg className="w-5 h-5 text-sw-red" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z"/>
+                      <svg className="w-5 h-5 text-sw-gray" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
                     </div>
-                  )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            /* Episodes List View */
+            <div className="space-y-1">
+              {selectedSeasonGroup?.episodes.map((episode) => {
+                const isPlaying = episode.index === currentEpisodeIndex;
+                const isHovered = episode.index === hoveredIndex;
+                const progress = episode.progress && episode.duration
+                  ? Math.round((episode.progress / episode.duration) * 100)
+                  : 0;
+                const displayNumber = episode.episodeNumber ?? (episode.index + 1);
+
+                return (
+                  <button
+                    key={`${episode.url}-${episode.index}`}
+                    onClick={() => onEpisodeSelect(episode)}
+                    onMouseEnter={() => setHoveredIndex(episode.index)}
+                    onMouseLeave={() => setHoveredIndex(null)}
+                    className={`w-full p-3 rounded-lg text-left transition-all duration-200 ${
+                      isPlaying
+                        ? 'bg-sw-red/20 border border-sw-red/50'
+                        : isHovered
+                        ? 'bg-gray-800/80'
+                        : 'bg-transparent hover:bg-gray-800/50'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Episode Number / Playing Indicator */}
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                        isPlaying ? 'bg-sw-red' : 'bg-gray-700'
+                      }`}>
+                        {isPlaying ? (
+                          <svg className="w-4 h-4 text-white animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                          </svg>
+                        ) : (
+                          <span className="text-sm font-medium text-white">{displayNumber}</span>
+                        )}
+                      </div>
+
+                      {/* Episode Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium truncate ${
+                          isPlaying ? 'text-white' : 'text-sw-light-gray'
+                        }`}>
+                          {episode.title}
+                        </p>
+
+                        {/* Meta Info */}
+                        <div className="flex items-center gap-2 mt-1 text-xs">
+                          {episode.duration ? (
+                            <span className="text-sw-gray">{formatTime(episode.duration)}</span>
+                          ) : null}
+
+                          {episode.completed ? (
+                            <span className="text-green-500 flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                              Watched
+                            </span>
+                          ) : progress > 0 ? (
+                            <span className="text-sw-red">{progress}%</span>
+                          ) : null}
+                        </div>
+
+                        {/* Progress Bar */}
+                        {!episode.completed && progress > 0 && (
+                          <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-sw-red rounded-full transition-all"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Play on hover */}
+                      {isHovered && !isPlaying && (
+                        <div className="flex-shrink-0">
+                          <svg className="w-5 h-5 text-sw-red" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {(!selectedSeasonGroup || selectedSeasonGroup.episodes.length === 0) && (
+                <div className="text-center py-8 text-sw-gray">
+                  <p className="text-sm">No episodes in this season</p>
                 </div>
-              </button>
-            );
-          })}
+              )}
+            </div>
+          )}
 
           {series.episodes.length === 0 && (
             <div className="text-center py-8 text-sw-gray">

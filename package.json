@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "tsc && vite build",
+    "build:webstore": "tsc && vite build && node scripts/build-webstore.js",
     "preview": "vite preview",
     "generate-icons": "node scripts/generate-icons.js",
     "postinstall": "node scripts/generate-icons.js"

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
-import { getRecentHistory, clearWatchHistory } from '@/lib/firestore';
+import { getRecentHistory, clearWatchHistory, deleteVideoFromHistory } from '@/lib/firestore';
 import { VideoHistory } from '@/types';
 import { logger } from '@/lib/logger';
 
@@ -10,6 +10,7 @@ interface UseRecentHistoryReturn {
   error: string | null;
   refresh: () => Promise<void>;
   clearHistory: () => Promise<void>;
+  deleteVideo: (videoUrl: string) => Promise<void>;
 }
 
 export function useRecentHistory(maxResults: number = 5): UseRecentHistoryReturn {
@@ -79,6 +80,21 @@ export function useRecentHistory(maxResults: number = 5): UseRecentHistoryReturn
     }
   }, [user]);
 
+  const deleteVideoHandler = useCallback(async (videoUrl: string) => {
+    if (!user) return;
+
+    try {
+      logger.info('history', 'Deleting video from history...', { url: videoUrl.substring(0, 50) });
+      await deleteVideoFromHistory(user.uid, videoUrl);
+      // Remove from local state
+      setHistory(prev => prev.filter(v => v.url !== videoUrl));
+      logger.info('history', 'Video deleted from history');
+    } catch (err) {
+      logger.error('history', 'Failed to delete video', err);
+      setError('Failed to delete video from history');
+    }
+  }, [user]);
+
   // Loading is true if auth is loading OR history is being fetched
   const isLoading = isAuthLoading || isHistoryLoading;
 
@@ -88,5 +104,6 @@ export function useRecentHistory(maxResults: number = 5): UseRecentHistoryReturn
     error,
     refresh,
     clearHistory: clearHistoryHandler,
+    deleteVideo: deleteVideoHandler,
   };
 }

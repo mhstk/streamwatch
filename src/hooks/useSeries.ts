@@ -27,8 +27,8 @@ interface UseSeriesReturn {
 
   // Actions
   refresh: () => Promise<void>;
-  createNewSeries: (name: string, initialEpisode?: { url: string; title?: string }) => Promise<Series | null>;
-  addToSeries: (seriesId: string, episodeUrl: string, episodeTitle?: string) => Promise<void>;
+  createNewSeries: (name: string, initialEpisode?: { url: string; title?: string; season?: number; episodeNumber?: number }) => Promise<Series | null>;
+  addToSeries: (seriesId: string, episodeUrl: string, episodeTitle?: string, season?: number, episodeNumber?: number) => Promise<void>;
   updateSeriesInfo: (seriesId: string, updates: Partial<Pick<Series, 'name' | 'currentEpisodeIndex'>>) => Promise<void>;
   updateEpisode: (seriesId: string, episodeIndex: number, updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>) => Promise<void>;
   removeSeries: (seriesId: string) => Promise<void>;
@@ -87,7 +87,7 @@ export function useSeries(): UseSeriesReturn {
   // Create a new series
   const createNewSeries = useCallback(async (
     name: string,
-    initialEpisode?: { url: string; title?: string }
+    initialEpisode?: { url: string; title?: string; season?: number; episodeNumber?: number }
   ): Promise<Series | null> => {
     if (!user) {
       logger.warn('series', 'Cannot create series - no user');
@@ -96,7 +96,7 @@ export function useSeries(): UseSeriesReturn {
 
     try {
       setError(null);
-      logger.info('series', 'Creating new series', { name, hasInitialEpisode: !!initialEpisode });
+      logger.info('series', 'Creating new series', { name, hasInitialEpisode: !!initialEpisode, season: initialEpisode?.season });
       const newSeries = await createSeries(user.uid, name, initialEpisode);
       await fetchAllSeries(); // Refresh list
       return newSeries;
@@ -111,7 +111,9 @@ export function useSeries(): UseSeriesReturn {
   const addToSeries = useCallback(async (
     seriesId: string,
     episodeUrl: string,
-    episodeTitle?: string
+    episodeTitle?: string,
+    season?: number,
+    episodeNumber?: number
   ): Promise<void> => {
     if (!user) {
       logger.warn('series', 'Cannot add to series - no user');
@@ -120,8 +122,8 @@ export function useSeries(): UseSeriesReturn {
 
     try {
       setError(null);
-      logger.info('series', 'Adding episode to series', { seriesId });
-      await addEpisodeToSeries(user.uid, seriesId, episodeUrl, episodeTitle);
+      logger.info('series', 'Adding episode to series', { seriesId, season, episodeNumber });
+      await addEpisodeToSeries(user.uid, seriesId, episodeUrl, episodeTitle, season, episodeNumber);
       await fetchAllSeries(); // Refresh list
 
       // Update current series if it's the one we added to

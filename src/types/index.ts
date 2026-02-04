@@ -28,7 +28,9 @@ export interface VideoHistory {
 export interface Episode {
   url: string;
   title: string;
-  index: number;                 // 0-based position
+  index: number;                 // 0-based global position
+  season: number;                // Season number (default: 1)
+  episodeNumber?: number;        // Episode number within season
   duration?: number;             // Populated after first play
   progress?: number;
   completed: boolean;
