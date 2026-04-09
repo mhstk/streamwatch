@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { extractTitleFromUrl, extractHost, formatTime } from '@/lib/utils';
+import { extractTitleFromUrl, formatTime } from '@/lib/utils';
 import { parseEpisodeInfo } from '@/lib/episodeParser';
 import { useVideoProgress } from '@/hooks/useVideoProgress';
 import { useSeries } from '@/hooks/useSeries';
@@ -9,10 +9,14 @@ import SeriesSidebar from './components/SeriesSidebar';
 import NextEpisodeOverlay from './components/NextEpisodeOverlay';
 import AddToSeriesModal from './components/AddToSeriesModal';
 import SubtitleModal, { SubtitleSource } from './components/SubtitleModal';
+import PlayerTopBar from './components/PlayerTopBar';
+import CapsuleActions from '@/components/CapsuleActions';
+import KeyboardLegend from '@/components/KeyboardLegend';
 import { Episode } from '@/types';
 import { fetchSubtitle, readSubtitleFile, createSubtitleBlobUrl } from '@/lib/subtitles';
 import { saveSubtitlePreference, getSubtitlePreference } from '@/lib/firestore';
 import { downloadSubtitle, extractSubtitleFromZip } from '@/lib/subtitleSearch';
+import { Timestamp } from 'firebase/firestore';
 
 // Extract a clean title from a video URL using the episode parser, with fallback
 function getVideoTitle(url: string): string {
@@ -50,13 +54,14 @@ function safePlay(video: HTMLVideoElement | null): void {
 export default function Player() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [title, setTitle] = useState<string>('StreamWatch Player');
-  const [sourceHost, setSourceHost] = useState<string>('');
+
   const [duration, setDuration] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
   const [showNextEpisode, setShowNextEpisode] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSubtitleModal, setShowSubtitleModal] = useState(false);
   const [subtitles, setSubtitles] = useState<{ label: string; src: string }[]>([]);
@@ -67,12 +72,18 @@ export default function Player() {
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [actionOverlay, setActionOverlay] = useState<{ type: 'play' | 'pause' | 'seekBack' | 'seekForward'; key: number } | null>(null);
+  const [subtitleOffset, setSubtitleOffset] = useState(0);
+  const [subtitleOffsetIndicator, setSubtitleOffsetIndicator] = useState<{ text: string; key: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
   const actionKeyRef = useRef(0);
+  const subtitleIndicatorKeyRef = useRef(0);
+  const originalCueTimesRef = useRef<Map<number, { start: number; end: number }> | null>(null);
+  const lastMousePosRef = useRef({ x: 0, y: 0 });
+  const isPlayingRef = useRef(false);
 
   // Progress tracking hook
   const {
@@ -80,7 +91,6 @@ export default function Player() {
     resumeTime,
     saveProgress,
     dismissResumePrompt,
-    acceptResume,
   } = useVideoProgress({
     videoUrl: videoUrl || '',
     title,
@@ -93,10 +103,8 @@ export default function Player() {
     currentSeries,
     currentEpisodeIndex,
     hasNextEpisode,
-    hasPreviousEpisode,
     loadSeriesForVideo,
     playNextEpisode,
-    playPreviousEpisode,
     createNewSeries,
     addToSeries,
     updateEpisode,
@@ -117,11 +125,10 @@ export default function Player() {
       logger.info('player', 'VIDEO_LOAD', {
         url: url.substring(0, 80) + '...',
         title: getVideoTitle(url),
-        host: extractHost(url)
+        host: new URL(url).hostname
       });
       setVideoUrl(url);
       setTitle(getVideoTitle(url));
-      setSourceHost(extractHost(url));
       document.title = `${getVideoTitle(url)} - StreamWatch`;
     } else {
       logger.warn('player', 'NO_VIDEO_URL');
@@ -147,11 +154,54 @@ export default function Player() {
     }, 600);
   }, []);
 
+  // Show a brief subtitle offset indicator
+  const flashSubtitleIndicator = useCallback((text: string) => {
+    subtitleIndicatorKeyRef.current += 1;
+    setSubtitleOffsetIndicator({ text, key: subtitleIndicatorKeyRef.current });
+    setTimeout(() => {
+      setSubtitleOffsetIndicator(prev => prev?.key === subtitleIndicatorKeyRef.current ? null : prev);
+    }, 800);
+  }, []);
+
+  // Apply subtitle offset to active track cues
+  const applySubtitleOffset = useCallback((offset: number) => {
+    const video = videoRef.current;
+    if (!video || activeSubtitleIndex === null) return;
+
+    const track = video.textTracks[activeSubtitleIndex];
+    if (!track || !track.cues) return;
+
+    // Store original times on first call for this track
+    if (!originalCueTimesRef.current) {
+      originalCueTimesRef.current = new Map();
+      for (let i = 0; i < track.cues.length; i++) {
+        const cue = track.cues[i] as VTTCue;
+        originalCueTimesRef.current.set(i, { start: cue.startTime, end: cue.endTime });
+      }
+    }
+
+    // Apply offset from original times
+    for (let i = 0; i < track.cues.length; i++) {
+      const cue = track.cues[i] as VTTCue;
+      const original = originalCueTimesRef.current.get(i);
+      if (original) {
+        cue.startTime = Math.max(0, original.start + offset);
+        cue.endTime = original.end + offset;
+        cue.line = -3;
+      }
+    }
+  }, [activeSubtitleIndex]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't handle if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.key === '?') {
+        setShowShortcuts(true);
         return;
       }
 
@@ -278,11 +328,52 @@ export default function Player() {
             setShowSubtitleModal(true);
           }
           break;
+
+        case 'z':
+          e.preventDefault();
+          if (activeSubtitleIndex !== null) {
+            setSubtitleOffset(prev => {
+              const newOffset = Math.round((prev - 0.5) * 10) / 10;
+              applySubtitleOffset(newOffset);
+              flashSubtitleIndicator(`Subtitle: ${newOffset >= 0 ? '+' : ''}${newOffset.toFixed(1)}s`);
+              return newOffset;
+            });
+          }
+          break;
+
+        case 'x':
+          e.preventDefault();
+          if (activeSubtitleIndex !== null) {
+            setSubtitleOffset(prev => {
+              const newOffset = Math.round((prev + 0.5) * 10) / 10;
+              applySubtitleOffset(newOffset);
+              flashSubtitleIndicator(`Subtitle: ${newOffset >= 0 ? '+' : ''}${newOffset.toFixed(1)}s`);
+              return newOffset;
+            });
+          }
+          break;
+
+        case 'r':
+          e.preventDefault();
+          if (activeSubtitleIndex !== null) {
+            setSubtitleOffset(0);
+            applySubtitleOffset(0);
+            flashSubtitleIndicator('Subtitle: Reset');
+          }
+          break;
       }
     };
 
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
+      // Reset mouse tracking so first move after fullscreen toggle isn't ignored
+      lastMousePosRef.current = { x: -1, y: -1 };
+      // Show controls briefly and restart hide timer
+      setShowControls(true);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      controlsTimeoutRef.current = setTimeout(() => {
+        if (isPlayingRef.current) setShowControls(false);
+      }, 3000);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -291,7 +382,7 @@ export default function Player() {
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [subtitles, activeSubtitleIndex]);
+  }, [subtitles, activeSubtitleIndex, applySubtitleOffset, flashSubtitleIndicator]);
 
   // Navigate to new video
   const navigateToVideo = useCallback((url: string, episodeTitle?: string) => {
@@ -304,7 +395,6 @@ export default function Player() {
     // Update state
     setVideoUrl(url);
     setTitle(episodeTitle || getVideoTitle(url));
-    setSourceHost(extractHost(url));
     document.title = `${episodeTitle || getVideoTitle(url)} - StreamWatch`;
     setShowNextEpisode(false);
     setIsLoading(true);
@@ -328,16 +418,25 @@ export default function Player() {
       if (dur > 0) {
         saveProgress(time, dur);
 
-        // Also update episode progress in series
-        if (currentSeries) {
+        // Also update episode progress in series (only if watched > 10s)
+        if (currentSeries && time > 10) {
           const progressPercent = Math.round((time / dur) * 100);
-          if (progressPercent >= 90) {
-            updateEpisode(currentSeries.id, currentEpisodeIndex, {
-              duration: dur,
-              progress: time,
-              completed: true,
-            });
-          }
+          logger.debug('player', 'Updating episode lastWatched', {
+            series: currentSeries.name,
+            episodeIndex: currentEpisodeIndex,
+            time: Math.round(time),
+          });
+          updateEpisode(currentSeries.id, currentEpisodeIndex, {
+            duration: dur,
+            progress: time,
+            completed: progressPercent >= 90,
+            lastWatched: Timestamp.now(), // Update lastWatched to track most recent episode
+          });
+        } else if (!currentSeries && time > 10) {
+          logger.warn('player', 'Not updating lastWatched - currentSeries is null', {
+            videoUrl: videoUrl?.substring(0, 80),
+            time: Math.round(time),
+          });
         }
       }
     }
@@ -353,12 +452,18 @@ export default function Player() {
       setDuration(dur);
       setIsLoading(false);
 
+      // Auto-resume: seek to saved position immediately
+      if (resumeTime > 0 && showResumePrompt) {
+        logger.info('player', 'AUTO_RESUME', { resumeAt: Math.round(resumeTime) });
+        videoRef.current.currentTime = resumeTime;
+      }
+
       // Update episode duration in series
       if (currentSeries) {
         updateEpisode(currentSeries.id, currentEpisodeIndex, { duration: dur });
       }
     }
-  }, [currentSeries, currentEpisodeIndex, updateEpisode]);
+  }, [currentSeries, currentEpisodeIndex, updateEpisode, resumeTime, showResumePrompt]);
 
   const handleVideoEnded = useCallback(() => {
     logger.info('player', 'VIDEO_ENDED', { hasNextEpisode, seriesName: currentSeries?.name });
@@ -379,13 +484,6 @@ export default function Player() {
     }
   }, [playNextEpisode, currentSeries, currentEpisodeIndex, navigateToVideo]);
 
-  const handlePlayPrevious = useCallback(() => {
-    const prevUrl = playPreviousEpisode();
-    if (prevUrl && currentSeries) {
-      const prevEpisode = currentSeries.episodes[currentEpisodeIndex - 1];
-      navigateToVideo(prevUrl, prevEpisode?.title);
-    }
-  }, [playPreviousEpisode, currentSeries, currentEpisodeIndex, navigateToVideo]);
 
   const handleReplay = useCallback(() => {
     setShowNextEpisode(false);
@@ -400,16 +498,7 @@ export default function Player() {
     navigateToVideo(episode.url, episode.title);
   }, [navigateToVideo]);
 
-  const handleResume = useCallback(() => {
-    const time = acceptResume();
-    logger.info('player', 'USER_RESUME', { resumeAt: Math.round(time), formatted: formatTime(time) });
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      safePlay(videoRef.current);
-    }
-  }, [acceptResume]);
-
-  const handleStartFromBeginning = useCallback(() => {
+  const handleStartOver = useCallback(() => {
     logger.info('player', 'USER_START_OVER');
     dismissResumePrompt();
     if (videoRef.current) {
@@ -417,6 +506,16 @@ export default function Player() {
       safePlay(videoRef.current);
     }
   }, [dismissResumePrompt]);
+
+  // Auto-dismiss resume prompt after 5 seconds
+  useEffect(() => {
+    if (!showResumePrompt) return;
+    const timer = setTimeout(() => {
+      logger.info('player', 'RESUME_PROMPT_AUTO_DISMISSED');
+      dismissResumePrompt();
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [showResumePrompt, dismissResumePrompt]);
 
   const handleAddToSeries = useCallback(async (seriesId: string, season?: number, episodeNumber?: number) => {
     if (videoUrl) {
@@ -528,6 +627,8 @@ export default function Player() {
       });
       setSubtitles([]);
       setActiveSubtitleIndex(null);
+      setSubtitleOffset(0);
+      originalCueTimesRef.current = null;
     }
   }, [videoUrl]);
 
@@ -536,9 +637,34 @@ export default function Player() {
     const video = videoRef.current;
     if (!video || !video.textTracks) return;
 
+    // Clear stored cue times when switching tracks
+    originalCueTimesRef.current = null;
+
     for (let i = 0; i < video.textTracks.length; i++) {
       const track = video.textTracks[i];
       track.mode = i === activeSubtitleIndex ? 'showing' : 'hidden';
+    }
+
+    // Set cue position and apply any existing offset to newly activated track
+    if (activeSubtitleIndex !== null) {
+      const track = video.textTracks[activeSubtitleIndex];
+      const applyCueSettings = () => {
+        if (!track?.cues) return;
+        // Store originals and apply offset (also sets cue.line = -3)
+        applySubtitleOffset(subtitleOffset);
+      };
+
+      if (track?.cues && track.cues.length > 0) {
+        applyCueSettings();
+      } else if (track) {
+        // Cues may not be loaded yet — wait for the load event
+        const onLoad = () => {
+          applyCueSettings();
+          track.removeEventListener('cuechange', onLoad);
+        };
+        track.addEventListener('cuechange', onLoad);
+        return () => track.removeEventListener('cuechange', onLoad);
+      }
     }
   }, [activeSubtitleIndex, subtitles]);
 
@@ -605,21 +731,31 @@ export default function Player() {
   }
 
   return (
-    <div className={`h-screen overflow-hidden flex bg-sw-dark text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
-      {/* Left Panel - Video Player */}
-      <div className="flex-1 flex items-center justify-center bg-black relative min-w-0">
+    <div
+      className={`h-screen overflow-hidden bg-black text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}
+      onMouseUp={() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }}
+    >
+      <PlayerTopBar sidebarOpen={showSidebar} onToggleSidebar={() => setShowSidebar(!showSidebar)} onShowShortcuts={() => setShowShortcuts(true)} />
+      <CapsuleActions sidebarOpen={showSidebar} onSubtitles={() => setShowSubtitleModal(true)} onAddToSeries={() => setShowAddModal(true)} />
+      <KeyboardLegend isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
+
+      {/* Video Player */}
+      <div className="w-full h-full flex items-center justify-center bg-black relative">
         {/* Video + Custom Controls wrapper */}
         <div
           ref={containerRef}
-          className={`relative group/player bg-black w-full h-full flex items-center justify-center ${isFullscreen ? 'w-screen h-screen' : ''}`}
-          onMouseMove={() => {
+          className={`relative group/player bg-black w-full h-full flex items-center justify-center ${isFullscreen ? 'w-screen h-screen' : ''} ${isFullscreen && !showControls && isPlaying ? 'cursor-none' : ''}`}
+          onMouseMove={(e) => {
+            // Ignore synthetic mousemove events (triggered by DOM changes like subtitle rendering)
+            if (e.clientX === lastMousePosRef.current.x && e.clientY === lastMousePosRef.current.y) return;
+            lastMousePosRef.current = { x: e.clientX, y: e.clientY };
             setShowControls(true);
             if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
             controlsTimeoutRef.current = setTimeout(() => {
-              if (isPlaying) setShowControls(false);
+              if (isPlayingRef.current) setShowControls(false);
             }, 3000);
           }}
-          onMouseLeave={() => { if (isPlaying) setShowControls(false); }}
+          onMouseLeave={() => { if (isPlayingRef.current) setShowControls(false); }}
         >
           {/* Loading Overlay */}
           {isLoading && (
@@ -633,34 +769,25 @@ export default function Player() {
 
           {/* Resume Prompt Overlay */}
           {showResumePrompt && !isLoading && !showNextEpisode && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-20">
-              <div className="bg-gray-900/95 rounded-2xl p-6 max-w-sm mx-4 border border-gray-700/50 shadow-2xl animate-fade-in">
-                <div className="text-center mb-6">
-                  <div className="w-16 h-16 mx-auto bg-sw-red/20 rounded-full flex items-center justify-center mb-4">
-                    <svg className="w-8 h-8 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Resume Watching?</h3>
-                  <p className="text-sw-gray text-sm">
-                    You left off at <span className="text-sw-red font-medium">{formatTime(resumeTime)}</span>
+            <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 pointer-events-none">
+              <div className="relative bg-gray-900/95 rounded-2xl pt-10 pb-5 px-5 max-w-xs mx-4 border border-gray-700/50 shadow-2xl animate-fade-in pointer-events-auto">
+                <button
+                  onClick={dismissResumePrompt}
+                  className="absolute top-3 right-3 text-sw-red hover:text-red-400 transition-colors p-1"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+                <div className="text-center mb-4">
+                  <p className="text-white text-sm">
+                    Resuming from <span className="text-sw-red font-medium">{formatTime(resumeTime)}</span>
                   </p>
                 </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleStartFromBeginning}
-                    className="flex-1 py-3 px-4 bg-gray-800 text-white rounded-lg font-medium hover:bg-gray-700 active:scale-95 transition-all duration-200"
-                  >
-                    Start Over
-                  </button>
-                  <button
-                    onClick={handleResume}
-                    className="flex-1 py-3 px-4 bg-sw-red text-white rounded-lg font-medium hover:bg-red-600 active:scale-95 transition-all duration-200 shadow-lg shadow-sw-red/20"
-                  >
-                    Resume
-                  </button>
-                </div>
+                <button
+                  onClick={handleStartOver}
+                  className="w-full py-2.5 px-4 bg-gray-800 text-white rounded-lg font-medium text-sm hover:bg-gray-700 active:scale-95 transition-all duration-200"
+                >
+                  Start Over
+                </button>
               </div>
             </div>
           )}
@@ -675,6 +802,7 @@ export default function Player() {
               onPlayNext={handlePlayNext}
               onCancel={() => setShowNextEpisode(false)}
               onReplay={handleReplay}
+              sidebarOpen={showSidebar}
             />
           )}
           <video
@@ -700,8 +828,8 @@ export default function Player() {
             onLoadedMetadata={handleLoadedMetadata}
             onCanPlay={() => setIsLoading(false)}
             onEnded={handleVideoEnded}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
+            onPlay={() => { setIsPlaying(true); isPlayingRef.current = true; }}
+            onPause={() => { setIsPlaying(false); isPlayingRef.current = false; }}
             onVolumeChange={() => {
               const v = videoRef.current;
               if (v) { setVolume(v.volume); setIsMuted(v.muted); }
@@ -722,8 +850,7 @@ export default function Player() {
           {/* Title Overlay (top gradient, hidden in fullscreen) */}
           {!isFullscreen && (
             <div className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-24 pt-6 px-8 pointer-events-none transition-opacity duration-300 z-10 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
-              <h1 className="text-white text-[60px] font-bold leading-none drop-shadow-lg" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
-              <p className="text-white/50 text-lg mt-2 drop-shadow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sourceHost}</p>
+              <h1 className="font-heading text-white text-[56px] font-bold leading-none drop-shadow-lg" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
             </div>
           )}
 
@@ -749,6 +876,15 @@ export default function Player() {
                     <span className="absolute text-white text-[10px] font-bold mt-1">15</span>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Subtitle offset indicator */}
+          {subtitleOffsetIndicator && (
+            <div key={subtitleOffsetIndicator.key} className="absolute top-4 right-4 pointer-events-none animate-action-flash z-20">
+              <div className="bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
+                <span className="text-white text-sm font-medium">{subtitleOffsetIndicator.text}</span>
               </div>
             </div>
           )}
@@ -823,121 +959,6 @@ export default function Player() {
                 }
               </button>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Right Panel - Info & Controls */}
-      <div className={`w-[320px] flex-shrink-0 bg-sw-dark flex flex-col p-5 border-l border-gray-800 overflow-y-auto transition-all duration-500 ${!isLoading ? 'opacity-100' : 'opacity-50'}`}>
-        {/* Series Badge & Navigation */}
-        {currentSeries && (
-          <div className="mb-4">
-            <button
-              onClick={() => setShowSidebar(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-sw-red/20 text-sw-red rounded-lg text-sm font-medium hover:bg-sw-red/30 transition-colors mb-2"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              <span className="truncate">{currentSeries.name}</span>
-              <span className="text-white/70 flex-shrink-0">({currentEpisodeIndex + 1}/{currentSeries.episodes.length})</span>
-            </button>
-
-            {/* Episode Navigation */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handlePlayPrevious}
-                disabled={!hasPreviousEpisode}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gray-800 text-white text-xs disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
-                title="Previous episode"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-                Previous
-              </button>
-              <button
-                onClick={handlePlayNext}
-                disabled={!hasNextEpisode}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gray-800 text-white text-xs disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
-                title="Next episode"
-              >
-                Next
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Divider */}
-        <div className="h-px bg-gray-800 mb-4" />
-
-        {/* Action Buttons */}
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="group flex items-center gap-2 py-2.5 px-4 bg-sw-red text-white rounded-lg font-medium text-sm hover:bg-red-600 active:scale-[0.98] transition-all duration-200 shadow-lg shadow-sw-red/20"
-          >
-            <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            {currentSeries ? 'Add to Another Series' : 'Add to Series'}
-          </button>
-
-          {currentSeries && (
-            <button
-              onClick={() => setShowSidebar(true)}
-              className="group flex items-center gap-2 py-2.5 px-4 bg-gray-800 text-white rounded-lg font-medium text-sm hover:bg-gray-700 active:scale-[0.98] transition-all duration-200 border border-gray-700"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-              </svg>
-              Episodes
-            </button>
-          )}
-
-          <button
-            onClick={() => setShowSubtitleModal(true)}
-            className={`group flex items-center gap-2 py-2.5 px-4 rounded-lg font-medium text-sm active:scale-[0.98] transition-all duration-200 border ${
-              subtitles.length > 0
-                ? 'bg-sw-red/20 text-sw-red border-sw-red/30 hover:bg-sw-red/30'
-                : 'bg-gray-800 text-white border-gray-700 hover:bg-gray-700'
-            }`}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-            </svg>
-            Subtitles
-            {subtitles.length > 0 && (
-              <span className="text-xs bg-sw-red/30 px-1.5 py-0.5 rounded ml-auto">
-                {activeSubtitleIndex !== null ? 'ON' : 'OFF'}
-              </span>
-            )}
-          </button>
-
-          <button className="group flex items-center gap-2 py-2.5 px-4 bg-gray-800/50 text-sw-light-gray rounded-lg font-medium text-sm hover:bg-gray-800 hover:text-white active:scale-[0.98] transition-all duration-200 border border-gray-700/50">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-            </svg>
-            Share
-          </button>
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Keyboard Hints */}
-        <div className="pt-4 border-t border-gray-800 mt-4">
-          <p className="text-[10px] text-sw-gray uppercase tracking-wider mb-2">Keyboard Shortcuts</p>
-          <div className="grid grid-cols-2 gap-1.5 text-[11px] text-sw-gray">
-            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">Space</kbd> Play/Pause</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">F</kbd> Fullscreen</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">M</kbd> Mute</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">C</kbd> Subtitles</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">←→</kbd> Seek 15s</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px]">↑↓</kbd> Volume</span>
           </div>
         </div>
       </div>

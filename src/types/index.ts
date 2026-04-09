@@ -34,6 +34,7 @@ export interface Episode {
   duration?: number;             // Populated after first play
   progress?: number;
   completed: boolean;
+  lastWatched?: any;
 }
 
 // Series/playlist of videos

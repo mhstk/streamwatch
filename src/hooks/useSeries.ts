@@ -30,7 +30,7 @@ interface UseSeriesReturn {
   createNewSeries: (name: string, initialEpisode?: { url: string; title?: string; season?: number; episodeNumber?: number }) => Promise<Series | null>;
   addToSeries: (seriesId: string, episodeUrl: string, episodeTitle?: string, season?: number, episodeNumber?: number) => Promise<void>;
   updateSeriesInfo: (seriesId: string, updates: Partial<Pick<Series, 'name' | 'currentEpisodeIndex'>>) => Promise<void>;
-  updateEpisode: (seriesId: string, episodeIndex: number, updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>) => Promise<void>;
+  updateEpisode: (seriesId: string, episodeIndex: number, updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed' | 'lastWatched'>>) => Promise<void>;
   removeSeries: (seriesId: string) => Promise<void>;
   loadSeriesForVideo: (videoUrl: string) => Promise<void>;
   playNextEpisode: () => string | null;
