@@ -14,6 +14,7 @@
   "dependencies": {
     "@vidstack/react": "^1.12.13",
     "firebase": "^10.7.1",
+    "lucide-react": "^1.8.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "vidstack": "^1.10.8"
