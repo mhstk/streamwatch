@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { X, Plus, Layers, CheckCircle2 } from 'lucide-react';
 import { Series } from '@/types';
 import { logger } from '@/lib/logger';
 import { parseEpisodeInfo, findRelatedEpisodes, ParsedEpisode } from '@/lib/episodeParser';
@@ -293,425 +294,388 @@ export default function AddToSeriesModal({
   const selectedCount = detectedEpisodes.filter(ep => ep.selected).length;
 
   return (
-    <>
-      {/* Backdrop */}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      style={{ backdropFilter: 'blur(14px)' }}
+      onClick={onClose}
+    >
       <div
-        className="fixed inset-0 bg-black/80 z-50 animate-fade-in"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-        <div
-          className="bg-gray-900 rounded-2xl w-full max-w-lg shadow-2xl border border-gray-700/50 pointer-events-auto animate-slide-up max-h-[90vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="p-4 border-b border-gray-700/50 flex-shrink-0">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Add to Series</h2>
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-              >
-                <svg className="w-5 h-5 text-sw-gray" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-sm text-sw-gray mt-1 truncate" title={videoTitle}>
+        className="bg-[#161210] border border-[rgba(44,36,32,0.4)] rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.7)] w-full max-w-lg animate-scale-in max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="p-5 border-b border-[rgba(44,36,32,0.4)] flex items-center justify-between flex-shrink-0">
+          <div className="flex-1 min-w-0">
+            <h2 className="font-heading text-base font-semibold text-[#f0ece8]">Add to Series</h2>
+            <p className="text-xs text-[#6b6560] mt-0.5 truncate" title={videoTitle}>
               {currentEpisodeInfo
                 ? `${currentEpisodeInfo.seriesName} - Episode ${currentEpisodeInfo.episode}`
                 : videoTitle}
             </p>
           </div>
+          <button onClick={onClose} className="btn-icon w-8 h-8 ml-3 flex-shrink-0">
+            <X size={16} />
+          </button>
+        </div>
 
-          {/* Already in series warning */}
-          {existingSeriesWithVideo && (
-            <div className="mx-4 mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex-shrink-0">
-              <p className="text-sm text-yellow-500">
-                This video is already in "{existingSeriesWithVideo.name}"
+        {/* Already in series warning */}
+        {existingSeriesWithVideo && (
+          <div className="mx-5 mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex-shrink-0">
+            <p className="text-xs text-yellow-500">
+              This video is already in "{existingSeriesWithVideo.name}"
+            </p>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="mx-5 mt-4 p-3 bg-[#B91C1C]/10 border border-[#B91C1C]/30 rounded-xl flex-shrink-0">
+            <p className="text-xs text-[#B91C1C]">{error}</p>
+          </div>
+        )}
+
+        {/* Content */}
+        <div className="p-5 flex-1 overflow-y-auto space-y-4">
+          {/* Mode Tabs */}
+          <div className="flex border-b border-[rgba(44,36,32,0.4)]">
+            {(['select', 'create'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`flex-1 py-2.5 text-xs font-medium text-center font-body transition-colors duration-200 border-b-2 border-transparent cursor-pointer capitalize ${
+                  mode === m
+                    ? 'text-[#f0ece8] border-b-[#B91C1C]'
+                    : 'text-[#6b6560] hover:text-[#a39e99]'
+                }`}
+              >
+                {m === 'select' ? 'Existing' : 'New Series'}
+              </button>
+            ))}
+            {detectedEpisodes.length > 0 && (
+              <button
+                onClick={() => setMode('auto')}
+                className={`flex-1 py-2.5 text-xs font-medium text-center font-body transition-colors duration-200 border-b-2 border-transparent cursor-pointer relative ${
+                  mode === 'auto'
+                    ? 'text-[#f0ece8] border-b-[#B91C1C]'
+                    : 'text-[#6b6560] hover:text-[#a39e99]'
+                }`}
+              >
+                Auto-Add
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                  {detectedEpisodes.length}
+                </span>
+              </button>
+            )}
+          </div>
+
+          {/* Season selector - shown in all modes */}
+          <div className="p-3 bg-[#1e1a17] border border-[#2c2420] rounded-xl">
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-xs font-medium text-[#a39e99]">
+                Season for new episodes
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={selectedSeason}
+                onChange={(e) => setSelectedSeason(Math.max(1, parseInt(e.target.value) || 1))}
+                className="input w-20 px-3 py-1.5 text-center text-sm"
+              />
+            </div>
+            {currentEpisodeInfo?.season && currentEpisodeInfo.season !== selectedSeason && (
+              <p className="text-xs text-yellow-500 mt-2">
+                Detected season {currentEpisodeInfo.season} from filename
               </p>
+            )}
+          </div>
+
+          {/* Scanning indicator */}
+          {isScanning && (
+            <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl flex items-center gap-3">
+              <div className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin flex-shrink-0" />
+              <span className="text-xs text-blue-400">Scanning for related episodes...</span>
             </div>
           )}
 
-          {/* Error */}
-          {error && (
-            <div className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex-shrink-0">
-              <p className="text-sm text-red-400">{error}</p>
-            </div>
-          )}
-
-          {/* Content */}
-          <div className="p-4 flex-1 overflow-y-auto">
-            {/* Mode Tabs */}
-            <div className="flex gap-2 mb-4">
-              <button
-                onClick={() => setMode('select')}
-                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                  mode === 'select'
-                    ? 'bg-sw-red text-white'
-                    : 'bg-gray-800 text-sw-gray hover:text-white'
-                }`}
-              >
-                Existing
-              </button>
-              <button
-                onClick={() => setMode('create')}
-                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                  mode === 'create'
-                    ? 'bg-sw-red text-white'
-                    : 'bg-gray-800 text-sw-gray hover:text-white'
-                }`}
-              >
-                New
-              </button>
-              {detectedEpisodes.length > 0 && (
-                <button
-                  onClick={() => setMode('auto')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all relative ${
-                    mode === 'auto'
-                      ? 'bg-sw-red text-white'
-                      : 'bg-gray-800 text-sw-gray hover:text-white'
-                  }`}
-                >
-                  Auto-Add
-                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 text-white text-xs rounded-full flex items-center justify-center">
-                    {detectedEpisodes.length}
-                  </span>
-                </button>
+          {mode === 'select' ? (
+            /* Series List */
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {allSeries.length === 0 ? (
+                <div className="text-center py-8 text-[#6b6560]">
+                  <Layers size={40} className="mx-auto mb-3 opacity-40" />
+                  <p className="text-sm">No series yet</p>
+                  <button
+                    onClick={() => setMode('create')}
+                    className="mt-2 text-[#B91C1C] text-xs hover:underline"
+                  >
+                    Create your first series
+                  </button>
+                </div>
+              ) : (
+                allSeries.map((series) => {
+                  const isAlreadyIn = series.episodes.some(ep => ep.url === videoUrl);
+                  return (
+                    <button
+                      key={series.id}
+                      onClick={() => !isAlreadyIn && handleAddToExisting(series.id)}
+                      disabled={isLoading || isAlreadyIn}
+                      className={`w-full bg-[#1e1a17] border border-[#2c2420] rounded-xl p-3 text-left transition-colors ${
+                        isAlreadyIn
+                          ? 'opacity-50 cursor-not-allowed'
+                          : 'cursor-pointer hover:bg-[#2a2320] hover:border-[#3a322e]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 bg-[#B91C1C]/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Layers size={16} className="text-[#B91C1C]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-[#f0ece8] truncate">{series.name}</p>
+                          <p className="text-xs text-[#6b6560]">
+                            {series.episodes.length} episode{series.episodes.length !== 1 ? 's' : ''}
+                            {isAlreadyIn && ' • Already added'}
+                          </p>
+                        </div>
+                        {!isAlreadyIn && (
+                          <Plus size={16} className="text-[#6b6560] flex-shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
-
-            {/* Season selector - shown in all modes */}
-            <div className="mb-4 p-3 bg-gray-800/50 rounded-lg">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-sw-light-gray">
-                  Season for new episodes
+          ) : mode === 'create' ? (
+            /* Create New Series */
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-[#a39e99] mb-2">
+                  Series Name
                 </label>
                 <input
-                  type="number"
-                  min="1"
-                  value={selectedSeason}
-                  onChange={(e) => setSelectedSeason(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-20 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-center focus:outline-none focus:border-sw-red transition-colors"
+                  type="text"
+                  value={newSeriesName}
+                  onChange={(e) => setNewSeriesName(e.target.value)}
+                  placeholder="e.g., My Favorite Anime"
+                  className="input w-full"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateNew();
+                  }}
                 />
               </div>
-              {currentEpisodeInfo?.season && currentEpisodeInfo.season !== selectedSeason && (
-                <p className="text-xs text-yellow-500 mt-1">
-                  Detected season {currentEpisodeInfo.season} from filename
-                </p>
-              )}
+
+              <button
+                onClick={handleCreateNew}
+                disabled={isLoading || !newSeriesName.trim()}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus size={16} />
+                    Create & Add Episode
+                  </>
+                )}
+              </button>
             </div>
+          ) : (
+            /* Auto-Add Mode */
+            <div className="space-y-4">
+              {/* Current episode info */}
+              {currentEpisodeInfo && (
+                <div className="p-3 bg-[#B91C1C]/10 border border-[#B91C1C]/30 rounded-xl">
+                  <p className="text-xs text-[#B91C1C] font-medium mb-0.5">Current Episode</p>
+                  <p className="text-sm text-[#f0ece8]">
+                    {currentEpisodeInfo.seriesName} - Episode {currentEpisodeInfo.episode}
+                    {currentEpisodeInfo.season && ` (Season ${currentEpisodeInfo.season})`}
+                  </p>
+                </div>
+              )}
 
-            {/* Scanning indicator */}
-            {isScanning && (
-              <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg flex items-center gap-3">
-                <div className="w-5 h-5 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                <span className="text-sm text-blue-400">Scanning for related episodes...</span>
-              </div>
-            )}
-
-            {mode === 'select' ? (
-              /* Series List */
-              <div className="space-y-2 max-h-56 overflow-y-auto">
-                {allSeries.length === 0 ? (
-                  <div className="text-center py-8 text-sw-gray">
-                    <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                    </svg>
-                    <p className="text-sm">No series yet</p>
+              {/* Detected episodes */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium text-[#a39e99]">
+                    Detected Next Episodes ({selectedCount}/{detectedEpisodes.length})
+                  </label>
+                  <div className="flex gap-3">
                     <button
-                      onClick={() => setMode('create')}
-                      className="mt-2 text-sw-red text-sm hover:underline"
+                      onClick={selectAllEpisodes}
+                      className="text-xs text-[#B91C1C] hover:underline"
                     >
-                      Create your first series
+                      Select All
+                    </button>
+                    <button
+                      onClick={deselectAllEpisodes}
+                      className="text-xs text-[#6b6560] hover:underline"
+                    >
+                      Deselect All
                     </button>
                   </div>
-                ) : (
-                  allSeries.map((series) => {
-                    const isAlreadyIn = series.episodes.some(ep => ep.url === videoUrl);
-                    return (
-                      <button
-                        key={series.id}
-                        onClick={() => !isAlreadyIn && handleAddToExisting(series.id)}
-                        disabled={isLoading || isAlreadyIn}
-                        className={`w-full p-3 rounded-lg text-left transition-all ${
-                          isAlreadyIn
-                            ? 'bg-gray-800/50 opacity-50 cursor-not-allowed'
-                            : 'bg-gray-800/50 hover:bg-gray-800 cursor-pointer'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-sw-red/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <svg className="w-5 h-5 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                            </svg>
+                </div>
+
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {detectedEpisodes.map((ep, index) => (
+                    <button
+                      key={ep.url}
+                      onClick={() => toggleEpisode(index)}
+                      className={`w-full p-2 rounded-xl text-left transition-colors flex items-center gap-3 ${
+                        ep.selected
+                          ? 'bg-[rgba(185,28,28,0.07)] border border-[#B91C1C]/40'
+                          : 'bg-[#1e1a17] border border-[#2c2420] hover:bg-[#2a2320]'
+                      }`}
+                    >
+                      <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${
+                        ep.selected ? 'bg-[#B91C1C]' : 'bg-[#2c2420]'
+                      }`}>
+                        {ep.selected && (
+                          <CheckCircle2 size={12} className="text-white" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-[#f0ece8] truncate">
+                          Episode {ep.episode}
+                          {ep.season && ` (S${ep.season})`}
+                        </p>
+                        <p className="text-xs text-[#6b6560] truncate">{ep.originalFilename}</p>
+                      </div>
+                    </button>
+                  ))}
+
+                  {detectedEpisodes.length === 0 && !isScanning && (
+                    <div className="text-center py-4 text-[#6b6560]">
+                      <p className="text-sm">No additional episodes detected</p>
+                      <p className="text-xs mt-1">Keep the source page tab open to detect more</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Matching series - only show if matches found and no series selected */}
+              {matchingSeries.length > 0 && !selectedExistingSeries && (
+                <div>
+                  <label className="block text-xs font-medium text-[#a39e99] mb-2">
+                    Add to Existing Series
+                  </label>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {matchingSeries.map((series) => {
+                      const isAlreadyIn = series.episodes.some(ep => ep.url === videoUrl);
+                      const seasons = new Set(series.episodes.map(ep => ep.season ?? 1));
+                      const seasonCount = seasons.size;
+                      return (
+                        <button
+                          key={series.id}
+                          onClick={() => !isAlreadyIn && setSelectedExistingSeries(series)}
+                          disabled={isLoading || isAlreadyIn}
+                          className={`w-full bg-[#1e1a17] border border-[#2c2420] rounded-xl p-2 text-left transition-colors flex items-center gap-3 ${
+                            isAlreadyIn
+                              ? 'opacity-50 cursor-not-allowed'
+                              : 'cursor-pointer hover:bg-[#2a2320] hover:border-[#3a322e]'
+                          }`}
+                        >
+                          <div className="w-8 h-8 bg-[#B91C1C]/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <Layers size={14} className="text-[#B91C1C]" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{series.name}</p>
-                            <p className="text-xs text-sw-gray">
-                              {series.episodes.length} episode{series.episodes.length !== 1 ? 's' : ''}
+                            <p className="text-sm font-medium text-[#f0ece8] truncate">{series.name}</p>
+                            <p className="text-xs text-[#6b6560]">
+                              {seasonCount} season{seasonCount !== 1 ? 's' : ''} • {series.episodes.length} ep
                               {isAlreadyIn && ' • Already added'}
                             </p>
                           </div>
                           {!isAlreadyIn && (
-                            <svg className="w-5 h-5 text-sw-gray" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
+                            <Plus size={14} className="text-[#6b6560] flex-shrink-0" />
                           )}
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            ) : mode === 'create' ? (
-              /* Create New Series */
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-sw-light-gray mb-2">
-                    Series Name
-                  </label>
-                  <input
-                    type="text"
-                    value={newSeriesName}
-                    onChange={(e) => setNewSeriesName(e.target.value)}
-                    placeholder="e.g., My Favorite Anime"
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-sw-gray focus:outline-none focus:border-sw-red transition-colors"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleCreateNew();
-                    }}
-                  />
-                </div>
-
-                <button
-                  onClick={handleCreateNew}
-                  disabled={isLoading || !newSeriesName.trim()}
-                  className="w-full py-3 px-4 bg-sw-red text-white font-medium rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      Create & Add Episode
-                    </>
-                  )}
-                </button>
-              </div>
-            ) : (
-              /* Auto-Add Mode */
-              <div className="space-y-4">
-                {/* Current episode info */}
-                {currentEpisodeInfo && (
-                  <div className="p-3 bg-sw-red/10 border border-sw-red/30 rounded-lg">
-                    <p className="text-sm text-sw-red font-medium">Current Episode</p>
-                    <p className="text-white">
-                      {currentEpisodeInfo.seriesName} - Episode {currentEpisodeInfo.episode}
-                      {currentEpisodeInfo.season && ` (Season ${currentEpisodeInfo.season})`}
-                    </p>
-                  </div>
-                )}
-
-                {/* Detected episodes */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-sw-light-gray">
-                      Detected Next Episodes ({selectedCount}/{detectedEpisodes.length})
-                    </label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={selectAllEpisodes}
-                        className="text-xs text-sw-red hover:underline"
-                      >
-                        Select All
-                      </button>
-                      <button
-                        onClick={deselectAllEpisodes}
-                        className="text-xs text-sw-gray hover:underline"
-                      >
-                        Deselect All
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {detectedEpisodes.map((ep, index) => (
-                      <button
-                        key={ep.url}
-                        onClick={() => toggleEpisode(index)}
-                        className={`w-full p-2 rounded-lg text-left transition-all flex items-center gap-3 ${
-                          ep.selected
-                            ? 'bg-sw-red/20 border border-sw-red/50'
-                            : 'bg-gray-800/50 hover:bg-gray-800'
-                        }`}
-                      >
-                        <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${
-                          ep.selected ? 'bg-sw-red' : 'bg-gray-700'
-                        }`}>
-                          {ep.selected && (
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-white truncate">
-                            Episode {ep.episode}
-                            {ep.season && ` (S${ep.season})`}
-                          </p>
-                          <p className="text-xs text-sw-gray truncate">{ep.originalFilename}</p>
-                        </div>
-                      </button>
-                    ))}
-
-                    {detectedEpisodes.length === 0 && !isScanning && (
-                      <div className="text-center py-4 text-sw-gray">
-                        <p className="text-sm">No additional episodes detected</p>
-                        <p className="text-xs mt-1">Keep the source page tab open to detect more</p>
-                      </div>
-                    )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
+              )}
 
-                {/* Matching series - only show if matches found and no series selected */}
-                {matchingSeries.length > 0 && !selectedExistingSeries && (
-                  <div>
-                    <label className="block text-sm font-medium text-sw-light-gray mb-2">
-                      Add to Existing Series
-                    </label>
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {matchingSeries.map((series) => {
-                        const isAlreadyIn = series.episodes.some(ep => ep.url === videoUrl);
-                        const seasons = new Set(series.episodes.map(ep => ep.season ?? 1));
-                        const seasonCount = seasons.size;
-                        return (
-                          <button
-                            key={series.id}
-                            onClick={() => !isAlreadyIn && setSelectedExistingSeries(series)}
-                            disabled={isLoading || isAlreadyIn}
-                            className={`w-full p-2 rounded-lg text-left transition-all flex items-center gap-3 ${
-                              isAlreadyIn
-                                ? 'bg-gray-800/30 opacity-50 cursor-not-allowed'
-                                : 'bg-gray-800/50 hover:bg-gray-800 cursor-pointer'
-                            }`}
-                          >
-                            <div className="w-8 h-8 bg-sw-red/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <svg className="w-4 h-4 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                              </svg>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-white truncate">{series.name}</p>
-                              <p className="text-xs text-sw-gray">
-                                {seasonCount} season{seasonCount !== 1 ? 's' : ''} • {series.episodes.length} ep
-                                {isAlreadyIn && ' • Already added'}
-                              </p>
-                            </div>
-                            {!isAlreadyIn && (
-                              <svg className="w-4 h-4 text-sw-gray flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                              </svg>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Selected series indicator */}
-                {selectedExistingSeries && (
-                  <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-green-400 font-medium">Adding to:</p>
-                        <p className="text-white">{selectedExistingSeries.name}</p>
-                      </div>
-                      <button
-                        onClick={() => setSelectedExistingSeries(null)}
-                        className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
-                        title="Change selection"
-                      >
-                        <svg className="w-4 h-4 text-sw-gray" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Only show create new section if no existing series selected */}
-                {!selectedExistingSeries && (
-                  <>
-                    {/* Divider */}
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-px bg-gray-700" />
-                      <span className="text-xs text-sw-gray">OR CREATE NEW</span>
-                      <div className="flex-1 h-px bg-gray-700" />
-                    </div>
-
-                    {/* Series name for creating new */}
+              {/* Selected series indicator */}
+              {selectedExistingSeries && (
+                <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <label className="block text-sm font-medium text-sw-light-gray mb-2">
-                        New Series Name
-                      </label>
-                      <input
-                        type="text"
-                        value={newSeriesName}
-                        onChange={(e) => setNewSeriesName(e.target.value)}
-                        placeholder="e.g., My Favorite Anime"
-                        className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-sw-gray focus:outline-none focus:border-sw-red transition-colors"
-                      />
+                      <p className="text-xs text-green-400 font-medium mb-0.5">Adding to:</p>
+                      <p className="text-sm text-[#f0ece8]">{selectedExistingSeries.name}</p>
                     </div>
+                    <button
+                      onClick={() => setSelectedExistingSeries(null)}
+                      className="btn-icon w-7 h-7"
+                      title="Change selection"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Only show create new section if no existing series selected */}
+              {!selectedExistingSeries && (
+                <>
+                  {/* Divider */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-[#2c2420]" />
+                    <span className="text-[10px] text-[#6b6560] tracking-wider">OR CREATE NEW</span>
+                    <div className="flex-1 h-px bg-[#2c2420]" />
+                  </div>
+
+                  {/* Series name for creating new */}
+                  <div>
+                    <label className="block text-xs font-medium text-[#a39e99] mb-2">
+                      New Series Name
+                    </label>
+                    <input
+                      type="text"
+                      value={newSeriesName}
+                      onChange={(e) => setNewSeriesName(e.target.value)}
+                      placeholder="e.g., My Favorite Anime"
+                      className="input w-full"
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* Action button - changes based on selection */}
+              <button
+                onClick={() => {
+                  if (selectedExistingSeries) {
+                    handleAddToExisting(selectedExistingSeries.id);
+                  } else {
+                    handleCreateNew();
+                  }
+                }}
+                disabled={isLoading || (!selectedExistingSeries && !newSeriesName.trim())}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    {selectedExistingSeries ? 'Adding...' : 'Creating...'}
+                  </>
+                ) : selectedExistingSeries ? (
+                  <>
+                    <Plus size={16} />
+                    Add Season {selectedSeason} with {selectedCount + 1} Episodes
+                  </>
+                ) : (
+                  <>
+                    <Plus size={16} />
+                    Create New Series with {selectedCount + 1} Episodes
                   </>
                 )}
-
-                {/* Action button - changes based on selection */}
-                <button
-                  onClick={() => {
-                    if (selectedExistingSeries) {
-                      handleAddToExisting(selectedExistingSeries.id);
-                    } else {
-                      handleCreateNew();
-                    }
-                  }}
-                  disabled={isLoading || (!selectedExistingSeries && !newSeriesName.trim())}
-                  className="w-full py-3 px-4 bg-sw-red text-white font-medium rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      {selectedExistingSeries ? 'Adding...' : 'Creating...'}
-                    </>
-                  ) : selectedExistingSeries ? (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      Add Season {selectedSeason} with {selectedCount + 1} Episodes
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      Create New Series with {selectedCount + 1} Episodes
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
+              </button>
+            </div>
+          )}
         </div>
       </div>
-    </>
+    </div>
   );
 }

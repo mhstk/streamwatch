@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { X, Search, Link, Upload, Download, Trash2, Check } from 'lucide-react';
 import {
   searchSubtitles,
   downloadSubtitle,
@@ -188,147 +189,102 @@ export default function SubtitleModal({
     }
   };
 
-  const tabs: { id: Tab; label: string; icon: JSX.Element }[] = [
-    {
-      id: 'search',
-      label: 'Search',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-      ),
-    },
-    {
-      id: 'url',
-      label: 'URL',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-        </svg>
-      ),
-    },
-    {
-      id: 'file',
-      label: 'File',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-        </svg>
-      ),
-    },
+  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    { id: 'search', label: 'Search', icon: <Search size={14} /> },
+    { id: 'url',    label: 'URL',    icon: <Link size={14} /> },
+    { id: 'file',   label: 'File',   icon: <Upload size={14} /> },
   ];
 
   return (
-    <>
-      {/* Backdrop */}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      style={{ backdropFilter: 'blur(14px)' }}
+      onClick={onClose}
+    >
       <div
-        className="fixed inset-0 bg-black/70 z-50 animate-fade-in"
-        onClick={onClose}
-      />
+        className="bg-[#161210] border border-[rgba(44,36,32,0.4)] rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.7)] w-full max-w-lg animate-scale-in max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="p-5 border-b border-[rgba(44,36,32,0.4)] flex items-center justify-between flex-shrink-0">
+          <h2 className="font-heading text-base font-semibold text-[#f0ece8]">Subtitles</h2>
+          <button onClick={onClose} className="btn-icon w-8 h-8">
+            <X size={16} />
+          </button>
+        </div>
 
-      {/* Modal */}
-      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div
-          className="bg-gray-900 rounded-2xl w-full max-w-lg shadow-2xl border border-gray-700/50 pointer-events-auto animate-slide-up max-h-[90vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="p-4 border-b border-gray-700/50 flex items-center justify-between flex-shrink-0">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <svg className="w-5 h-5 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-              </svg>
-              Subtitles
-            </h2>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-            >
-              <svg className="w-5 h-5 text-sw-gray hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Content */}
-          <div className="p-4 space-y-4 overflow-y-auto flex-1">
-            {/* Current Subtitles */}
-            {currentSubtitles.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium text-sw-gray">Active Subtitles</h3>
-                <div className="space-y-1">
-                  {/* Off option */}
-                  <button
-                    onClick={() => onSelectSubtitle(null)}
-                    className={`w-full flex items-center justify-between p-2 rounded-lg transition-colors ${
-                      activeSubtitleIndex === null
-                        ? 'bg-sw-red/20 text-sw-red'
-                        : 'bg-gray-800 text-white hover:bg-gray-700'
-                    }`}
-                  >
-                    <span>Off</span>
-                    {activeSubtitleIndex === null && (
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                  </button>
-
-                  {currentSubtitles.map((sub, index) => (
-                    <div
-                      key={index}
-                      className={`flex items-center justify-between p-2 rounded-lg transition-colors ${
-                        activeSubtitleIndex === index
-                          ? 'bg-sw-red/20 text-sw-red'
-                          : 'bg-gray-800 text-white'
-                      }`}
-                    >
-                      <button
-                        onClick={() => onSelectSubtitle(index)}
-                        className="flex-1 text-left hover:text-sw-red transition-colors truncate"
-                      >
-                        {sub.label}
-                      </button>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        {activeSubtitleIndex === index && (
-                          <svg className="w-4 h-4 text-sw-red" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                        <button
-                          onClick={() => onRemoveSubtitle(index)}
-                          className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                          title="Remove subtitle"
-                        >
-                          <svg className="w-4 h-4 text-sw-gray hover:text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Tabs */}
-            <div className="flex gap-1 bg-gray-800/50 p-1 rounded-lg">
-              {tabs.map((tab) => (
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Current Subtitles */}
+          {currentSubtitles.length > 0 && (
+            <div className="p-5 pb-0 space-y-2">
+              <h3 className="text-xs font-medium text-[#6b6560] uppercase tracking-wider">Active Subtitles</h3>
+              <div className="space-y-1">
+                {/* Off option */}
                 <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
-                    activeTab === tab.id
-                      ? 'bg-sw-red text-white'
-                      : 'text-sw-gray hover:text-white hover:bg-gray-700/50'
+                  onClick={() => onSelectSubtitle(null)}
+                  className={`w-full flex items-center justify-between py-2.5 px-3 border-b border-[#1e1a17] transition-colors rounded-lg ${
+                    activeSubtitleIndex === null
+                      ? 'text-[#B91C1C] bg-[rgba(185,28,28,0.07)]'
+                      : 'text-[#a39e99] hover:bg-[#1e1a17]'
                   }`}
                 >
-                  {tab.icon}
-                  {tab.label}
+                  <span className="text-sm">Off</span>
+                  {activeSubtitleIndex === null && <Check size={14} className="text-[#B91C1C]" />}
                 </button>
-              ))}
-            </div>
 
+                {currentSubtitles.map((sub, index) => (
+                  <div
+                    key={index}
+                    className={`flex items-center justify-between py-2.5 px-3 border-b border-[#1e1a17] transition-colors rounded-lg ${
+                      activeSubtitleIndex === index
+                        ? 'text-[#B91C1C] bg-[rgba(185,28,28,0.07)]'
+                        : 'text-[#f0ece8] hover:bg-[#1e1a17]'
+                    }`}
+                  >
+                    <button
+                      onClick={() => onSelectSubtitle(index)}
+                      className="flex-1 text-left text-sm truncate hover:text-[#B91C1C] transition-colors"
+                    >
+                      {sub.label}
+                    </button>
+                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                      {activeSubtitleIndex === index && (
+                        <Check size={14} className="text-[#B91C1C]" />
+                      )}
+                      <button
+                        onClick={() => onRemoveSubtitle(index)}
+                        className="btn-icon w-6 h-6 text-[#6b6560] hover:text-[#B91C1C]"
+                        title="Remove subtitle"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div className="flex border-b border-[rgba(44,36,32,0.4)] mt-4">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 py-2.5 text-xs font-medium text-center font-body transition-colors duration-200 border-b-2 border-transparent cursor-pointer flex items-center justify-center gap-1.5 ${
+                  activeTab === tab.id
+                    ? 'text-[#f0ece8] border-b-[#B91C1C]'
+                    : 'text-[#6b6560] hover:text-[#a39e99]'
+                }`}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-5 space-y-4">
             {/* Search Tab */}
             {activeTab === 'search' && (
               <div className="space-y-3">
@@ -339,12 +295,12 @@ export default function SubtitleModal({
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                     placeholder="Movie or TV show name..."
-                    className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-sw-red transition-colors"
+                    className="input flex-1"
                   />
                   <select
                     value={selectedLanguage}
                     onChange={(e) => setSelectedLanguage(e.target.value)}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sw-red transition-colors"
+                    className="input px-3"
                   >
                     {commonLanguages.map((lang) => (
                       <option key={lang.code} value={lang.code}>
@@ -357,7 +313,7 @@ export default function SubtitleModal({
                 <button
                   onClick={handleSearch}
                   disabled={isSearching || !searchQuery.trim()}
-                  className="w-full py-2 bg-sw-red text-white rounded-lg font-medium hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                  className="btn-primary w-full flex items-center justify-center gap-2"
                 >
                   {isSearching ? (
                     <>
@@ -366,29 +322,27 @@ export default function SubtitleModal({
                     </>
                   ) : (
                     <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
+                      <Search size={15} />
                       Search Subtitles
                     </>
                   )}
                 </button>
 
                 {searchError && (
-                  <p className="text-red-500 text-sm text-center">{searchError}</p>
+                  <p className="text-[#B91C1C] text-xs text-center">{searchError}</p>
                 )}
 
                 {/* Found Movie */}
                 {foundMovie && (
-                  <div className="bg-gray-800/50 rounded-lg p-3 flex items-center gap-3">
-                    <div className="w-8 h-8 bg-sw-red/20 rounded flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-sw-red" fill="currentColor" viewBox="0 0 24 24">
+                  <div className="bg-[#1e1a17] border border-[#2c2420] rounded-xl p-3 flex items-center gap-3">
+                    <div className="w-8 h-8 bg-[#B91C1C]/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <svg className="w-4 h-4 text-[#B91C1C]" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M8 5v14l11-7z"/>
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{foundMovie.title}</p>
-                      <p className="text-xs text-sw-gray">
+                      <p className="text-sm text-[#f0ece8] font-medium truncate">{foundMovie.title}</p>
+                      <p className="text-xs text-[#6b6560]">
                         {foundMovie.year} · {foundMovie.type === 'series' ? 'TV Series' : 'Movie'}
                       </p>
                     </div>
@@ -397,21 +351,21 @@ export default function SubtitleModal({
 
                 {/* Search Results */}
                 {searchResults.length > 0 && (
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    <h4 className="text-sm font-medium text-sw-gray">
+                  <div className="space-y-1 max-h-60 overflow-y-auto">
+                    <h4 className="text-xs font-medium text-[#6b6560] mb-2">
                       Found {searchResults.length} subtitle{searchResults.length !== 1 ? 's' : ''}
                     </h4>
                     {searchResults.map((result) => (
                       <div
                         key={result.id}
-                        className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700/80 transition-colors"
+                        className="py-2.5 border-b border-[#1e1a17] flex items-center justify-between hover:bg-[#1e1a17] px-2 rounded-lg transition-colors"
                       >
                         <div className="flex-1 min-w-0 mr-3">
-                          <p className="text-white text-sm font-medium truncate">
+                          <p className="text-sm text-[#f0ece8] font-medium truncate">
                             {result.release}
                           </p>
-                          <div className="flex items-center gap-2 text-xs text-sw-gray mt-1 flex-wrap">
-                            <span className="bg-sw-red/20 text-sw-red px-1.5 py-0.5 rounded">
+                          <div className="flex items-center gap-2 text-xs text-[#6b6560] mt-1 flex-wrap">
+                            <span className="bg-[#B91C1C]/20 text-[#B91C1C] px-1.5 py-0.5 rounded">
                               {result.languageName}
                             </span>
                             {result.hearingImpaired && (
@@ -419,34 +373,30 @@ export default function SubtitleModal({
                                 HI
                               </span>
                             )}
-                            <span>
-                              <svg className="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                              </svg>
+                            <span className="flex items-center gap-1">
+                              <Download size={11} />
                               {result.downloadCount.toLocaleString()}
                             </span>
                             {result.rating > 0 && (
-                              <span>
-                                <svg className="w-3 h-3 inline mr-1 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                              <span className="flex items-center gap-1">
+                                <svg className="w-3 h-3 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
                                   <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                                 </svg>
                                 {result.rating.toFixed(1)}
                               </span>
                             )}
-                            <span className="text-sw-gray/70">by {result.uploader}</span>
+                            <span className="text-[#6b6560]/70">by {result.uploader}</span>
                           </div>
                         </div>
                         <button
                           onClick={() => handleDownloadSubtitle(result)}
                           disabled={downloadingId === result.id}
-                          className="px-3 py-1.5 bg-sw-red text-white text-sm rounded-lg font-medium hover:bg-red-600 disabled:opacity-50 transition-colors flex items-center gap-1 flex-shrink-0"
+                          className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1 flex-shrink-0"
                         >
                           {downloadingId === result.id ? (
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-3 h-3 border-2 border-[#f0ece8]/30 border-t-[#f0ece8] rounded-full animate-spin" />
                           ) : (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
+                            <Download size={13} />
                           )}
                           Add
                         </button>
@@ -456,12 +406,12 @@ export default function SubtitleModal({
                 )}
 
                 {hasSearched && searchResults.length === 0 && !isSearching && !searchError && (
-                  <p className="text-sw-gray text-sm text-center py-4">
+                  <p className="text-[#6b6560] text-xs text-center py-4">
                     No results found. Try different search terms.
                   </p>
                 )}
 
-                <p className="text-xs text-sw-gray text-center">
+                <p className="text-xs text-[#6b6560] text-center">
                   Powered by SubSource.net
                 </p>
               </div>
@@ -475,22 +425,22 @@ export default function SubtitleModal({
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://example.com/subtitle.srt"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-sw-red transition-colors"
+                  className="input w-full"
                 />
                 <input
                   type="text"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder="Label (e.g., English, Spanish)"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-sw-red transition-colors"
+                  className="input w-full"
                 />
                 {error && (
-                  <p className="text-red-500 text-sm">{error}</p>
+                  <p className="text-[#B91C1C] text-xs">{error}</p>
                 )}
                 <button
                   onClick={handleUrlSubmit}
                   disabled={isLoading || !url.trim()}
-                  className="w-full py-2 bg-sw-red text-white rounded-lg font-medium hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                  className="btn-primary w-full flex items-center justify-center gap-2"
                 >
                   {isLoading ? (
                     <>
@@ -499,9 +449,7 @@ export default function SubtitleModal({
                     </>
                   ) : (
                     <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
+                      <Link size={15} />
                       Add Subtitle
                     </>
                   )}
@@ -522,24 +470,22 @@ export default function SubtitleModal({
                 />
                 <label
                   htmlFor="subtitle-file"
-                  className="flex flex-col items-center justify-center gap-2 w-full py-8 bg-gray-800 border-2 border-dashed border-gray-600 rounded-lg text-sw-light-gray hover:border-sw-red hover:text-white cursor-pointer transition-colors"
+                  className="flex flex-col items-center justify-center gap-2 w-full py-8 bg-[#1e1a17] border-2 border-dashed border-[#2c2420] rounded-xl text-[#a39e99] hover:border-[#B91C1C] hover:text-[#f0ece8] cursor-pointer transition-colors"
                 >
-                  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                  </svg>
-                  <span className="font-medium">Choose SRT or VTT file</span>
-                  <span className="text-xs text-sw-gray">or drag and drop</span>
+                  <Upload size={36} />
+                  <span className="text-sm font-medium">Choose SRT or VTT file</span>
+                  <span className="text-xs text-[#6b6560]">or drag and drop</span>
                 </label>
               </div>
             )}
 
             {/* Keyboard hint */}
-            <p className="text-xs text-sw-gray text-center">
-              Press <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-[10px]">C</kbd> to toggle subtitles on/off
+            <p className="text-xs text-[#6b6560] text-center">
+              Press <kbd className="px-1.5 py-0.5 bg-[#1e1a17] border border-[#2c2420] rounded text-[10px]">C</kbd> to toggle subtitles on/off
             </p>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
