@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Play } from 'lucide-react';
 import { Series } from '@/types';
 import { getPosterFromFilename } from '@/lib/tmdb';
 
@@ -17,8 +18,7 @@ interface SeriesCardProps {
   continueUrl?: string;
 }
 
-export default function SeriesCard({ series, onClick, onPlay, continueInfo, continueUrl }: SeriesCardProps) {
-  const [isHovered, setIsHovered] = useState(false);
+export default function SeriesCard({ series, onClick, continueInfo }: SeriesCardProps) {
   const [poster, setPoster] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -66,116 +66,54 @@ export default function SeriesCard({ series, onClick, onPlay, continueInfo, cont
   }, [series.name, series.episodes]);
 
   return (
-    <div
-      className="flex-shrink-0 w-[250px] group/card relative"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <div
-        className={`relative rounded-md overflow-hidden bg-gray-800 cursor-pointer transition-all duration-300 ${
-          isHovered ? 'transform scale-110 z-20 shadow-2xl' : ''
-        }`}
-        onClick={onClick}
-      >
+    <div className="group relative">
+      <div className="card" onClick={onClick}>
         {/* Thumbnail / Poster */}
-        <div className="aspect-video bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center overflow-hidden">
+        <div className="aspect-video relative flex items-center justify-center bg-gradient-to-br from-sw-elevated to-sw-surface overflow-hidden">
           {poster ? (
             <img
               src={poster}
               alt={series.name}
-              className="w-full h-full object-cover"
+              className="object-cover w-full h-full"
             />
           ) : isLoading ? (
-            <div className="w-10 h-10 border-2 border-sw-red/30 border-t-sw-red rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-sw-accent/30 border-t-sw-accent rounded-full animate-spin" />
           ) : (
-            <div className="w-16 h-16 bg-sw-red/20 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-sw-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
-              </svg>
-            </div>
+            <Play size={24} className="text-sw-text-muted transition-all duration-200 group-hover:text-sw-accent group-hover:scale-[1.15]" />
           )}
 
           {/* Series badge */}
-          <div className="absolute top-2 left-2 bg-sw-red/90 text-white text-xs px-2 py-0.5 rounded">
-            Series
-          </div>
+          <span className="badge badge-neutral absolute top-2 left-2">Series</span>
 
-          {/* Continue badge */}
+          {/* Continue / episode badge */}
           {continueInfo && (
-            <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
-              Continue S{continueInfo.season}E{continueInfo.episode}
+            <span className="badge badge-accent absolute top-2 right-2">
+              S{continueInfo.season}E{continueInfo.episode}
+            </span>
+          )}
+
+          {/* Progress Bar */}
+          {stats.progressPercent > 0 && (
+            <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-sw-border">
+              <div
+                className="h-full bg-sw-accent"
+                style={{ width: `${stats.progressPercent}%` }}
+              />
             </div>
           )}
         </div>
 
-        {/* Progress Bar */}
-        {stats.progressPercent > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-600">
-            <div
-              className="h-full bg-sw-red"
-              style={{ width: `${stats.progressPercent}%` }}
-            />
-          </div>
-        )}
-
-        {/* Hover Overlay */}
-        <div className={`absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent transition-opacity duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
-          <div className="absolute bottom-0 left-0 right-0 p-3">
-            {/* Play Button */}
-            <div className="flex items-center gap-2 mb-2">
-              <button
-                className="w-9 h-9 bg-white rounded-full flex items-center justify-center hover:bg-white/90 transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onPlay && continueUrl) {
-                    onPlay(continueUrl);
-                  } else if (series.episodes.length > 0) {
-                    // Default to first episode if no continue URL
-                    onPlay?.(series.episodes[0].url);
-                  }
-                }}
-              >
-                <svg className="w-5 h-5 text-black ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              </button>
-              <button
-                className="w-9 h-9 border-2 border-gray-400 rounded-full flex items-center justify-center hover:border-white transition-colors ml-auto"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClick();
-                }}
-                title="View series details"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Info */}
-            <p className="text-xs text-green-500 font-medium">
-              {stats.progressPercent === 100 ? 'Completed' : `${stats.watchedCount}/${stats.episodeCount} watched`}
-            </p>
-            <p className="text-xs text-sw-gray mt-0.5">
-              {stats.seasonCount} season{stats.seasonCount !== 1 ? 's' : ''} • {stats.episodeCount} episodes
-            </p>
-          </div>
+        {/* Card Body */}
+        <div className="p-2.5 px-3">
+          <p className="font-heading text-[13px] font-semibold text-sw-text truncate">
+            {series.name}
+          </p>
+          <p className="font-body text-[11px] text-sw-text-muted mt-0.5">
+            {stats.seasonCount} season{stats.seasonCount !== 1 ? 's' : ''} · {stats.episodeCount} ep
+            {continueInfo ? ` · ${continueInfo.progressPercent}%` : ''}
+          </p>
         </div>
       </div>
-
-      {/* Title (below card) */}
-      <p className={`text-sm mt-2 truncate transition-opacity ${isHovered ? 'opacity-0' : 'opacity-100'}`}>
-        {series.name}
-      </p>
-      {!isHovered && (
-        <p className="text-xs text-sw-gray">
-          {stats.seasonCount} season{stats.seasonCount !== 1 ? 's' : ''} • {stats.episodeCount} ep
-        </p>
-      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { X, Play, Check, Trash2, ChevronRight } from 'lucide-react';
 import { Series, Episode } from '@/types';
 import { formatTime } from '@/lib/utils';
 import { getPosterFromFilename } from '@/lib/tmdb';
@@ -29,7 +30,7 @@ export default function SeriesDetailModal({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [poster, setPoster] = useState<string | null>(null);
+  const [_poster, setPoster] = useState<string | null>(null);
 
   // Reset state when modal opens/closes or series changes
   useEffect(() => {
@@ -146,231 +147,193 @@ export default function SeriesDetailModal({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/80 z-50 animate-fade-in"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 glass"
         onClick={onClose}
       />
 
-      {/* Modal */}
-      <div className="fixed inset-4 md:inset-8 lg:inset-16 bg-gray-900 rounded-xl z-50 overflow-hidden flex flex-col animate-scale-in">
-        {/* Header with backdrop image */}
-        <div className="relative h-48 md:h-64 flex-shrink-0">
-          {/* Backdrop/Poster */}
-          {poster ? (
-            <img
-              src={poster}
-              alt={series.name}
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-          ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-700 to-gray-800" />
+      {/* Modal Panel */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+        <div
+          className="bg-sw-bg border border-sw-border-soft rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.7)] animate-scale-in pointer-events-auto mx-4 flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="p-5 border-b border-sw-border-soft flex items-center justify-between flex-shrink-0">
+            <div className="flex-1 min-w-0">
+              {/* Back button when viewing a season */}
+              {selectedSeason !== null && seasonCount > 1 && (
+                <button
+                  onClick={handleBackToSeasons}
+                  className="flex items-center gap-1 text-sw-text-muted hover:text-sw-text mb-1 transition-colors text-xs"
+                >
+                  <ChevronRight size={12} className="rotate-180" />
+                  All Seasons
+                </button>
+              )}
+              <h1 className="font-heading text-base font-semibold text-sw-text truncate">
+                {selectedSeason !== null
+                  ? `${series.name} — Season ${selectedSeason}`
+                  : series.name}
+              </h1>
+              <p className="text-xs text-sw-text-muted mt-0.5">
+                {selectedSeason !== null
+                  ? `${selectedSeasonGroup?.episodes.length || 0} episodes`
+                  : `${seasonCount} season${seasonCount !== 1 ? 's' : ''} · ${series.episodes.length} episodes`}
+              </p>
+            </div>
+            <button onClick={onClose} className="btn-icon w-8 h-8 ml-3 flex-shrink-0">
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Delete confirmation banner */}
+          {showDeleteConfirm && (
+            <div className="px-5 py-4 bg-red-500/10 border-b border-red-900/40 flex-shrink-0">
+              <p className="text-sm text-red-400 mb-3">
+                Delete "{series.name}"? This will remove the series and all episode tracking. This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={isDeleting}
+                  className="btn-secondary flex-1 py-2 text-sm disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="flex-1 py-2 px-4 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isDeleting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete Series'
+                  )}
+                </button>
+              </div>
+            </div>
           )}
 
-          {/* Gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/60 to-transparent" />
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto p-5">
+            {selectedSeason === null ? (
+              /* Seasons List View */
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {seasonGroups.map(({ season, episodes: seasonEpisodes, watchedCount, totalDuration }) => {
+                  const progress = seasonEpisodes.length > 0
+                    ? Math.round((watchedCount / seasonEpisodes.length) * 100)
+                    : 0;
 
-          {/* Close button */}
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors z-10"
-          >
-            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+                  return (
+                    <button
+                      key={season}
+                      onClick={() => handleSelectSeason(season)}
+                      className="p-4 bg-sw-surface hover:bg-sw-elevated border border-sw-border rounded-xl text-left transition-all group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <span className="font-heading text-base font-semibold text-sw-text">
+                            Season {season}
+                          </span>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-sw-text-muted">
+                            <span>{seasonEpisodes.length} episode{seasonEpisodes.length !== 1 ? 's' : ''}</span>
+                            {totalDuration > 0 && (
+                              <span>{formatTime(totalDuration)}</span>
+                            )}
+                          </div>
 
-          {/* Series info */}
-          <div className="absolute bottom-0 left-0 right-0 p-6">
-            {/* Back button when viewing a season */}
-            {selectedSeason !== null && seasonCount > 1 && (
-              <button
-                onClick={handleBackToSeasons}
-                className="flex items-center gap-1 text-sw-gray hover:text-white mb-2 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-                <span className="text-sm">All Seasons</span>
-              </button>
-            )}
-
-            <h1 className="text-2xl md:text-3xl font-bold text-white">{series.name}</h1>
-            <p className="text-sw-gray mt-1">
-              {selectedSeason !== null
-                ? `Season ${selectedSeason} • ${selectedSeasonGroup?.episodes.length || 0} episodes`
-                : `${seasonCount} season${seasonCount !== 1 ? 's' : ''} • ${series.episodes.length} episodes`
-              }
-            </p>
-
-            {/* Overall progress */}
-            {selectedSeason === null && overallStats.total > 0 && (
-              <div className="mt-3 max-w-xs">
-                <div className="flex items-center justify-between text-xs text-sw-gray mb-1">
-                  <span>{overallStats.watched} of {overallStats.total} watched</span>
-                  <span>{overallStats.percent}%</span>
-                </div>
-                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-sw-red rounded-full transition-all"
-                    style={{ width: `${overallStats.percent}%` }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Delete confirmation banner */}
-        {showDeleteConfirm && (
-          <div className="p-4 bg-red-500/10 border-b border-red-500/30 flex-shrink-0">
-            <p className="text-sm text-red-400 mb-3">
-              Delete "{series.name}"? This will remove the series and all episode tracking. This cannot be undone.
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                disabled={isDeleting}
-                className="flex-1 py-2 px-4 bg-gray-700 text-white text-sm rounded-lg hover:bg-gray-600 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={isDeleting}
-                className="flex-1 py-2 px-4 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isDeleting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  'Delete Series'
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {selectedSeason === null ? (
-            /* Seasons List View */
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {seasonGroups.map(({ season, episodes: seasonEpisodes, watchedCount, totalDuration }) => {
-                const progress = seasonEpisodes.length > 0
-                  ? Math.round((watchedCount / seasonEpisodes.length) * 100)
-                  : 0;
-
-                return (
-                  <button
-                    key={season}
-                    onClick={() => handleSelectSeason(season)}
-                    className="p-4 bg-gray-800/50 hover:bg-gray-800 rounded-xl text-left transition-all group"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <span className="text-lg font-medium text-white">
-                          Season {season}
-                        </span>
-                        <div className="flex items-center gap-3 mt-1 text-sm text-sw-gray">
-                          <span>{seasonEpisodes.length} episode{seasonEpisodes.length !== 1 ? 's' : ''}</span>
-                          {totalDuration > 0 && (
-                            <span>{formatTime(totalDuration)}</span>
-                          )}
+                          {/* Progress */}
+                          <div className="mt-3">
+                            {progress === 100 ? (
+                              <div className="flex items-center gap-1 text-xs text-green-400">
+                                <Check size={13} />
+                                Completed
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between text-xs text-sw-text-muted mb-1">
+                                  <span>{watchedCount} of {seasonEpisodes.length} watched</span>
+                                  {progress > 0 && <span>{progress}%</span>}
+                                </div>
+                                <div className="h-1.5 bg-sw-border rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-sw-accent rounded-full transition-all"
+                                    style={{ width: `${progress}%` }}
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Progress */}
-                        <div className="mt-3">
-                          {progress === 100 ? (
-                            <div className="flex items-center gap-1 text-sm text-green-500">
-                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                              Completed
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex items-center justify-between text-xs text-sw-gray mb-1">
-                                <span>{watchedCount} of {seasonEpisodes.length} watched</span>
-                                {progress > 0 && <span>{progress}%</span>}
-                              </div>
-                              <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-sw-red rounded-full transition-all"
-                                  style={{ width: `${progress}%` }}
-                                />
-                              </div>
-                            </>
-                          )}
-                        </div>
+                        <ChevronRight size={18} className="text-sw-text-muted group-hover:text-sw-text transition-colors ml-3 flex-shrink-0" />
                       </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Episodes List View */
+              <div className="space-y-1">
+                {selectedSeasonGroup?.episodes.map((episode) => {
+                  const isHoveredEp = episode.index === hoveredIndex;
+                  const progress = episode.progress && episode.duration
+                    ? Math.round((episode.progress / episode.duration) * 100)
+                    : 0;
+                  const displayNumber = episode.episodeNumber ?? (episode.index + 1);
 
-                      <svg className="w-6 h-6 text-sw-gray group-hover:text-white transition-colors ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            /* Episodes List View */
-            <div className="space-y-2">
-              {selectedSeasonGroup?.episodes.map((episode) => {
-                const isHovered = episode.index === hoveredIndex;
-                const progress = episode.progress && episode.duration
-                  ? Math.round((episode.progress / episode.duration) * 100)
-                  : 0;
-                const displayNumber = episode.episodeNumber ?? (episode.index + 1);
-
-                return (
-                  <button
-                    key={`${episode.url}-${episode.index}`}
-                    onClick={() => handleEpisodeClick(episode)}
-                    onMouseEnter={() => setHoveredIndex(episode.index)}
-                    onMouseLeave={() => setHoveredIndex(null)}
-                    className={`w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                      isHovered ? 'bg-gray-800' : 'bg-gray-800/30 hover:bg-gray-800/60'
-                    }`}
-                  >
-                    <div className="flex items-start gap-4">
-                      {/* Episode Number */}
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                        episode.completed ? 'bg-green-600/20' : 'bg-gray-700'
+                  return (
+                    <button
+                      key={`${episode.url}-${episode.index}`}
+                      onClick={() => handleEpisodeClick(episode)}
+                      onMouseEnter={() => setHoveredIndex(episode.index)}
+                      onMouseLeave={() => setHoveredIndex(null)}
+                      className={`w-full px-3 py-3 rounded-lg text-left transition-colors duration-200 flex items-start gap-3 ${
+                        episode.completed
+                          ? 'opacity-60 hover:opacity-100 hover:bg-sw-surface'
+                          : isHoveredEp
+                          ? 'border-l-[3px] border-sw-accent bg-sw-surface pl-[9px]'
+                          : 'hover:bg-sw-surface border-l-[3px] border-transparent'
+                      }`}
+                    >
+                      {/* Episode Number / Check */}
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                        episode.completed ? 'bg-green-600/20' : 'bg-sw-elevated'
                       }`}>
                         {episode.completed ? (
-                          <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
+                          <Check size={15} className="text-green-400" />
                         ) : (
-                          <span className="text-base font-medium text-white">{displayNumber}</span>
+                          <span className="font-body text-sm font-medium text-sw-text">{displayNumber}</span>
                         )}
                       </div>
 
                       {/* Episode Info */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-base font-medium text-white truncate">
+                        <p className="font-heading text-sm font-semibold text-sw-text truncate">
                           {episode.title}
                         </p>
 
-                        {/* Meta Info */}
-                        <div className="flex items-center gap-3 mt-1 text-sm">
+                        <div className="flex items-center gap-2 mt-0.5 text-xs">
                           {episode.duration ? (
-                            <span className="text-sw-gray">{formatTime(episode.duration)}</span>
+                            <span className="text-sw-text-muted">{formatTime(episode.duration)}</span>
                           ) : null}
 
                           {episode.completed ? (
-                            <span className="text-green-500">Watched</span>
+                            <span className="text-green-400">Watched</span>
                           ) : progress > 0 ? (
-                            <span className="text-sw-red">{progress}% watched</span>
+                            <span className="text-sw-accent">{progress}% watched</span>
                           ) : null}
                         </div>
 
                         {/* Progress Bar */}
                         {!episode.completed && progress > 0 && (
-                          <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden max-w-xs">
+                          <div className="mt-1.5 h-[3px] bg-sw-border rounded-full overflow-hidden max-w-[160px]">
                             <div
-                              className="h-full bg-sw-red rounded-full transition-all"
+                              className="h-full bg-sw-accent rounded-full transition-all"
                               style={{ width: `${progress}%` }}
                             />
                           </div>
@@ -378,57 +341,53 @@ export default function SeriesDetailModal({
                       </div>
 
                       {/* Play icon on hover */}
-                      <div className={`flex-shrink-0 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
-                        <div className="w-10 h-10 bg-sw-red rounded-full flex items-center justify-center">
-                          <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z"/>
-                          </svg>
+                      <div className={`flex-shrink-0 transition-opacity ${isHoveredEp ? 'opacity-100' : 'opacity-0'}`}>
+                        <div className="w-8 h-8 bg-sw-accent rounded-full flex items-center justify-center">
+                          <Play size={13} fill="#f0ece8" stroke="none" />
                         </div>
                       </div>
-                    </div>
-                  </button>
-                );
-              })}
+                    </button>
+                  );
+                })}
 
-              {(!selectedSeasonGroup || selectedSeasonGroup.episodes.length === 0) && (
-                <div className="text-center py-12 text-sw-gray">
-                  <p>No episodes in this season</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {series.episodes.length === 0 && (
-            <div className="text-center py-12 text-sw-gray">
-              <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
-              </svg>
-              <p>No episodes in this series</p>
-            </div>
-          )}
-        </div>
-
-        {/* Footer with actions */}
-        <div className="p-4 border-t border-gray-800 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-sw-gray">
-              {overallStats.percent === 100 ? (
-                <span className="text-green-500">Series completed!</span>
-              ) : overallStats.watched > 0 ? (
-                <span>{overallStats.percent}% complete</span>
-              ) : (
-                <span>Not started</span>
-              )}
-            </div>
-
-            {onDeleteSeries && (
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
-              >
-                Delete Series
-              </button>
+                {(!selectedSeasonGroup || selectedSeasonGroup.episodes.length === 0) && (
+                  <div className="text-center py-10 text-sw-text-muted font-body text-sm">
+                    No episodes in this season
+                  </div>
+                )}
+              </div>
             )}
+
+            {series.episodes.length === 0 && (
+              <div className="text-center py-10 text-sw-text-muted font-body text-sm">
+                No episodes in this series
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-5 py-4 border-t border-sw-border-soft flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-body text-sw-text-muted">
+                {overallStats.percent === 100 ? (
+                  <span className="text-green-400">Series completed!</span>
+                ) : overallStats.watched > 0 ? (
+                  <span>{overallStats.percent}% complete</span>
+                ) : (
+                  <span>Not started</span>
+                )}
+              </div>
+
+              {onDeleteSeries && (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="btn-secondary text-red-400 border-red-900/50 flex items-center gap-1.5 py-1.5 px-3 text-xs"
+                >
+                  <Trash2 size={13} />
+                  Delete Series
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
