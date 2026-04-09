@@ -2,99 +2,167 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CSS Variables */
 :root {
-  --sw-accent: #E50914;
+  --sw-accent: #B91C1C;
+  --sw-accent-hover: #dc2626;
+  --sw-accent-dark: #991B1B;
+  --sw-bg: #161210;
+  --sw-surface: #1e1a17;
+  --sw-elevated: #2a2320;
+  --sw-text: #f0ece8;
+  --sw-text-secondary: #a39e99;
+  --sw-text-muted: #6b6560;
+  --sw-border: #2c2420;
 }
 
-/* Base styles */
 @layer base {
   html {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-      Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 
   body {
-    @apply bg-sw-dark text-white;
+    background-color: var(--sw-bg);
+    color: var(--sw-text);
     margin: 0;
     padding: 0;
   }
 
-  /* Scrollbar styling */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  ::-webkit-scrollbar-track {
-    @apply bg-gray-900;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-gray-700 rounded;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-600;
-  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--sw-border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a322e; }
 }
 
-/* Component styles */
 @layer components {
-  /* Button variants */
   .btn-primary {
-    @apply py-2 px-4 bg-sw-red text-white rounded font-medium;
-    @apply hover:bg-red-700 transition-colors;
-    @apply focus:outline-none focus:ring-2 focus:ring-sw-red focus:ring-offset-2 focus:ring-offset-sw-dark;
+    @apply py-2.5 px-6 rounded-lg font-medium text-sm;
+    font-family: 'Inter', sans-serif;
+    background: var(--sw-accent);
+    color: var(--sw-text);
+    border: none;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .btn-primary:hover {
+    background: var(--sw-accent-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 24px rgba(185, 28, 28, 0.45);
+  }
+  .btn-primary:active {
+    background: var(--sw-accent-dark);
+    transform: translateY(0);
   }
 
   .btn-secondary {
-    @apply py-2 px-4 bg-gray-800 text-white rounded font-medium;
-    @apply hover:bg-gray-700 transition-colors;
-    @apply focus:outline-none focus:ring-2 focus:ring-gray-600 focus:ring-offset-2 focus:ring-offset-sw-dark;
+    @apply py-2.5 px-6 rounded-lg font-medium text-sm;
+    font-family: 'Inter', sans-serif;
+    background: transparent;
+    color: var(--sw-text);
+    border: 1px solid var(--sw-border);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .btn-secondary:hover {
+    background: var(--sw-elevated);
+    border-color: var(--sw-text-secondary);
+    transform: translateY(-2px);
   }
 
-  /* Card styles */
+  .btn-ghost {
+    @apply py-2.5 px-6 rounded-lg font-medium text-sm;
+    font-family: 'Inter', sans-serif;
+    background: transparent;
+    color: var(--sw-text-secondary);
+    border: none;
+    transition: all 0.2s ease;
+  }
+  .btn-ghost:hover {
+    background: var(--sw-elevated);
+    color: var(--sw-text);
+  }
+
+  .btn-icon {
+    @apply rounded-lg flex items-center justify-center;
+    width: 38px;
+    height: 38px;
+    background: var(--sw-surface);
+    border: 1px solid var(--sw-border);
+    color: var(--sw-text-secondary);
+    transition: all 0.2s ease;
+    cursor: pointer;
+    outline: none;
+    position: relative;
+  }
+  .btn-icon:hover {
+    border-color: var(--sw-text-secondary);
+    color: var(--sw-text);
+    background: var(--sw-elevated);
+  }
+
   .card {
-    @apply bg-gray-800/50 rounded-lg p-4;
+    background: var(--sw-surface);
+    border: 1px solid var(--sw-border);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    border-color: #3a322e;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
   }
 
-  /* Input styles */
   .input {
-    @apply w-full bg-gray-700 text-white rounded p-2;
-    @apply focus:outline-none focus:ring-2 focus:ring-sw-red;
+    font-family: 'Inter', sans-serif;
+    background: var(--sw-surface);
+    color: var(--sw-text);
+    border: 1px solid var(--sw-border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input:focus {
+    border-color: var(--sw-accent);
   }
 
-  /* Select styles */
-  select {
-    @apply bg-gray-700 text-white rounded p-2 cursor-pointer;
-    @apply focus:outline-none focus:ring-2 focus:ring-sw-red;
+  .badge {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 6px;
   }
-
-  /* Checkbox styles */
-  input[type='checkbox'] {
-    @apply accent-sw-red cursor-pointer;
+  .badge-accent {
+    background: rgba(185, 28, 28, 0.15);
+    color: var(--sw-accent);
+  }
+  .badge-neutral {
+    background: var(--sw-surface);
+    color: var(--sw-text-secondary);
+    border: 1px solid var(--sw-border);
+  }
+  .badge-success {
+    background: rgba(22, 163, 74, 0.13);
+    color: #4ade80;
   }
 }
 
-/* Utility styles */
 @layer utilities {
-  /* Hide scrollbar but keep functionality */
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
-
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
 
-  /* Aspect ratio for video container */
-  .aspect-video {
-    aspect-ratio: 16 / 9;
-  }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--sw-border); border-radius: 2px; }
 
-  /* Text truncation */
+  .aspect-video { aspect-ratio: 16 / 9; }
+
   .truncate-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -102,42 +170,57 @@
     overflow: hidden;
   }
 
-  /* Animations */
+  .font-heading { font-family: 'Plus Jakarta Sans', sans-serif; }
+  .font-body { font-family: 'Inter', sans-serif; }
+
   @keyframes fade-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
-
   @keyframes slide-up {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
   }
-
-  .animate-fade-in {
-    animation: fade-in 0.3s ease-out forwards;
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
   }
-
-  .animate-slide-up {
-    animation: slide-up 0.5s ease-out forwards;
-  }
-
   @keyframes action-flash {
     0% { opacity: 0.7; transform: scale(0.8); }
     30% { opacity: 1; transform: scale(1); }
     100% { opacity: 0; transform: scale(1.1); }
   }
-
-  .animate-action-flash {
-    animation: action-flash 0.6s ease-out forwards;
+  @keyframes drop-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
   }
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+  .animate-slide-up { animation: slide-up 0.5s ease-out forwards; }
+  .animate-fade-up { animation: fade-up 0.4s ease forwards; }
+  .animate-action-flash { animation: action-flash 0.6s ease-out forwards; }
+  .animate-drop-in { animation: drop-in 0.2s ease forwards; }
+  .animate-scale-in { animation: scale-in 0.2s ease forwards; }
+
+  .glass {
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .glass-light {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+
+video::cue {
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 1.2em;
+  line-height: 1.4;
+  border-radius: 2px;
+  padding: 2px 6px;
 }
