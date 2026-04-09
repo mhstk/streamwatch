@@ -713,16 +713,16 @@ export default function Player() {
         <div className={`text-center transition-all duration-500 ${isReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
           <div className="mb-6">
             <div className="w-20 h-20 mx-auto bg-sw-red/20 rounded-2xl flex items-center justify-center mb-4">
-              <svg className="w-10 h-10 text-sw-red" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="w-10 h-10 text-sw-accent" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M8 5v14l11-7z"/>
               </svg>
             </div>
             <h1 className="text-3xl font-bold">
-              <span className="text-sw-red">Stream</span>Watch
+              <span className="text-sw-accent">Stream</span>Watch
             </h1>
           </div>
-          <p className="text-sw-light-gray mb-2">No video URL provided</p>
-          <p className="text-sm text-sw-gray">
+          <p className="text-sw-text-secondary mb-2">No video URL provided</p>
+          <p className="text-sm text-sw-text-muted">
             Right-click a video link and select "Play in StreamWatch"
           </p>
         </div>
@@ -762,7 +762,7 @@ export default function Player() {
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
               <div className="text-center">
                 <div className="w-12 h-12 border-4 border-sw-red/30 border-t-sw-red rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-sw-light-gray text-sm">Loading video...</p>
+                <p className="text-sw-text-secondary text-sm">Loading video...</p>
               </div>
             </div>
           )}
@@ -770,21 +770,21 @@ export default function Player() {
           {/* Resume Prompt Overlay */}
           {showResumePrompt && !isLoading && !showNextEpisode && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 pointer-events-none">
-              <div className="relative bg-gray-900/95 rounded-2xl pt-10 pb-5 px-5 max-w-xs mx-4 border border-gray-700/50 shadow-2xl animate-fade-in pointer-events-auto">
+              <div className="relative bg-sw-bg/95 rounded-2xl pt-10 pb-5 px-5 max-w-xs mx-4 border border-sw-border shadow-2xl animate-fade-in pointer-events-auto">
                 <button
                   onClick={dismissResumePrompt}
-                  className="absolute top-3 right-3 text-sw-red hover:text-red-400 transition-colors p-1"
+                  className="absolute top-3 right-3 text-sw-accent hover:text-red-400 transition-colors p-1"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
                 <div className="text-center mb-4">
                   <p className="text-white text-sm">
-                    Resuming from <span className="text-sw-red font-medium">{formatTime(resumeTime)}</span>
+                    Resuming from <span className="text-sw-accent font-medium">{formatTime(resumeTime)}</span>
                   </p>
                 </div>
                 <button
                   onClick={handleStartOver}
-                  className="w-full py-2.5 px-4 bg-gray-800 text-white rounded-lg font-medium text-sm hover:bg-gray-700 active:scale-95 transition-all duration-200"
+                  className="w-full py-2.5 px-4 bg-sw-surface text-sw-text rounded-lg font-medium text-sm hover:bg-sw-elevated active:scale-95 transition-all duration-200"
                 >
                   Start Over
                 </button>
@@ -911,7 +911,7 @@ export default function Player() {
 
             <div className="flex items-center gap-3">
               {/* Play/Pause */}
-              <button className="text-white hover:text-sw-red transition-colors" onClick={() => { const v = videoRef.current; if (!v) return; if (v.paused) { safePlay(v); flashOverlay('play'); } else { v.pause(); flashOverlay('pause'); } }}>
+              <button className="text-white hover:text-sw-accent transition-colors" onClick={() => { const v = videoRef.current; if (!v) return; if (v.paused) { safePlay(v); flashOverlay('play'); } else { v.pause(); flashOverlay('pause'); } }}>
                 {isPlaying
                   ? <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                   : <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -919,13 +919,13 @@ export default function Player() {
               </button>
 
               {/* Skip Back 15s */}
-              <button className="text-white hover:text-sw-red transition-colors relative" title="Back 15s" onClick={() => { if (videoRef.current) { videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 15); flashOverlay('seekBack'); } }}>
+              <button className="text-white hover:text-sw-accent transition-colors relative" title="Back 15s" onClick={() => { if (videoRef.current) { videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 15); flashOverlay('seekBack'); } }}>
                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
                 <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[40%] text-[7px] font-bold">15</span>
               </button>
 
               {/* Skip Forward 15s */}
-              <button className="text-white hover:text-sw-red transition-colors relative" title="Forward 15s" onClick={() => { if (videoRef.current) { videoRef.current.currentTime = Math.min(videoRef.current.duration, videoRef.current.currentTime + 15); flashOverlay('seekForward'); } }}>
+              <button className="text-white hover:text-sw-accent transition-colors relative" title="Forward 15s" onClick={() => { if (videoRef.current) { videoRef.current.currentTime = Math.min(videoRef.current.duration, videoRef.current.currentTime + 15); flashOverlay('seekForward'); } }}>
                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
                 <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[40%] text-[7px] font-bold">15</span>
               </button>
@@ -937,7 +937,7 @@ export default function Player() {
 
               {/* Volume */}
               <div className="flex items-center gap-2 group/vol">
-                <button className="text-white hover:text-sw-red transition-colors" onClick={() => { if (videoRef.current) videoRef.current.muted = !videoRef.current.muted; }}>
+                <button className="text-white hover:text-sw-accent transition-colors" onClick={() => { if (videoRef.current) videoRef.current.muted = !videoRef.current.muted; }}>
                   {isMuted || volume === 0
                     ? <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
                     : volume < 0.5
@@ -952,7 +952,7 @@ export default function Player() {
               </div>
 
               {/* Fullscreen */}
-              <button className="text-white hover:text-sw-red transition-colors" onClick={() => { if (document.fullscreenElement) document.exitFullscreen(); else containerRef.current?.requestFullscreen(); }}>
+              <button className="text-white hover:text-sw-accent transition-colors" onClick={() => { if (document.fullscreenElement) document.exitFullscreen(); else containerRef.current?.requestFullscreen(); }}>
                 {isFullscreen
                   ? <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" /></svg>
                   : <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
