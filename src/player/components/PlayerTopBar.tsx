@@ -5,9 +5,10 @@ interface PlayerTopBarProps {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onShowShortcuts: () => void;
+  hasSeries?: boolean;
 }
 
-export default function PlayerTopBar({ sidebarOpen, onToggleSidebar, onShowShortcuts }: PlayerTopBarProps) {
+export default function PlayerTopBar({ sidebarOpen, onToggleSidebar, onShowShortcuts, hasSeries = false }: PlayerTopBarProps) {
   const blur = (e: React.MouseEvent) => (e.currentTarget as HTMLElement).blur();
 
   return (
@@ -25,11 +26,13 @@ export default function PlayerTopBar({ sidebarOpen, onToggleSidebar, onShowShort
         <Tooltip text="Shortcuts" shortcut="?">
           <button onClick={(e) => { onShowShortcuts(); blur(e); }} className="btn-icon w-9 h-9 bg-[rgba(30,26,23,0.6)] border-sw-border-soft font-heading text-[15px] font-semibold">?</button>
         </Tooltip>
-        <Tooltip text="Sidebar">
-          <button onClick={(e) => { onToggleSidebar(); blur(e); }} className="btn-icon w-9 h-9 bg-[rgba(30,26,23,0.6)] border-sw-border-soft">
-            {sidebarOpen ? <ChevronRight size={17} /> : <PanelRight size={17} />}
-          </button>
-        </Tooltip>
+        {hasSeries && (
+          <Tooltip text="Sidebar">
+            <button onClick={(e) => { onToggleSidebar(); blur(e); }} className="btn-icon w-9 h-9 bg-[rgba(30,26,23,0.6)] border-sw-border-soft">
+              {sidebarOpen ? <ChevronRight size={17} /> : <PanelRight size={17} />}
+            </button>
+          </Tooltip>
+        )}
       </div>
     </div>
   );

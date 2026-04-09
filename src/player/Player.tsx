@@ -735,7 +735,7 @@ export default function Player() {
       className={`h-screen overflow-hidden bg-black text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}
       onMouseUp={() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }}
     >
-      <PlayerTopBar sidebarOpen={showSidebar} onToggleSidebar={() => setShowSidebar(!showSidebar)} onShowShortcuts={() => setShowShortcuts(true)} />
+      <PlayerTopBar sidebarOpen={showSidebar} onToggleSidebar={() => setShowSidebar(!showSidebar)} onShowShortcuts={() => setShowShortcuts(true)} hasSeries={!!currentSeries} />
       <CapsuleActions sidebarOpen={showSidebar} onSubtitles={() => setShowSubtitleModal(true)} onAddToSeries={() => setShowAddModal(true)} />
       <KeyboardLegend isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
@@ -849,7 +849,7 @@ export default function Player() {
 
           {/* Title Overlay (top gradient, hidden in fullscreen) */}
           {!isFullscreen && (
-            <div className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-24 pt-6 px-8 pointer-events-none transition-opacity duration-300 z-10 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
+            <div className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-24 pt-[72px] px-8 pointer-events-none transition-opacity duration-300 z-10 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
               <h1 className="font-heading text-white text-[56px] font-bold leading-none drop-shadow-lg" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
             </div>
           )}
