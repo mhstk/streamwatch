@@ -137,6 +137,7 @@ export async function searchMedia(params: {
       api_key: TMDB_API_KEY,
       query: query.trim(),
       include_adult: 'false',
+      language: 'en-US',
     });
 
     if (year) {
