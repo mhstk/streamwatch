@@ -548,9 +548,10 @@ export async function updateEpisodeInSeries(
   userId: string,
   seriesId: string,
   episodeIndex: number,
-  updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>
+  updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>,
+  episodeUrl?: string
 ): Promise<void> {
-  logger.info('firestore', 'UPDATE_EPISODE', { userId, seriesId, episodeIndex, updates });
+  logger.info('firestore', 'UPDATE_EPISODE', { userId, seriesId, episodeIndex, episodeUrl, updates });
 
   try {
     const db = getFirebaseDb();
@@ -562,20 +563,26 @@ export async function updateEpisodeInSeries(
     }
 
     const episodes = [...(seriesSnap.data().episodes || [])];
-    if (episodeIndex >= 0 && episodeIndex < episodes.length) {
-      episodes[episodeIndex] = { ...episodes[episodeIndex], ...updates };
 
-      await updateDoc(seriesRef, {
-        episodes,
-        updatedAt: serverTimestamp(),
-      });
+    // Find by URL first (reliable after sorting), fall back to index
+    let targetIndex = episodeUrl
+      ? episodes.findIndex(ep => ep.url === episodeUrl)
+      : episodeIndex;
 
-      logger.info('firestore', 'UPDATE_EPISODE_SUCCESS', { seriesId, episodeIndex });
-    } else {
-      throw new Error('Episode index out of bounds');
+    if (targetIndex < 0 || targetIndex >= episodes.length) {
+      throw new Error(`Episode not found (url: ${episodeUrl}, index: ${episodeIndex})`);
     }
+
+    episodes[targetIndex] = { ...episodes[targetIndex], ...updates };
+
+    await updateDoc(seriesRef, {
+      episodes,
+      updatedAt: serverTimestamp(),
+    });
+
+    logger.info('firestore', 'UPDATE_EPISODE_SUCCESS', { seriesId, targetIndex, episodeUrl });
   } catch (err) {
-    logger.error('firestore', 'UPDATE_EPISODE_FAILED', { seriesId, episodeIndex, error: err });
+    logger.error('firestore', 'UPDATE_EPISODE_FAILED', { seriesId, episodeIndex, episodeUrl, error: err });
     throw err;
   }
 }

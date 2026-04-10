@@ -30,7 +30,7 @@ interface UseSeriesReturn {
   createNewSeries: (name: string, initialEpisode?: { url: string; title?: string; season?: number; episodeNumber?: number }) => Promise<Series | null>;
   addToSeries: (seriesId: string, episodeUrl: string, episodeTitle?: string, season?: number, episodeNumber?: number) => Promise<void>;
   updateSeriesInfo: (seriesId: string, updates: Partial<Pick<Series, 'name' | 'currentEpisodeIndex'>>) => Promise<void>;
-  updateEpisode: (seriesId: string, episodeIndex: number, updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed' | 'lastWatched'>>) => Promise<void>;
+  updateEpisode: (seriesId: string, episodeIndex: number, updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed' | 'lastWatched'>>, episodeUrl?: string) => Promise<void>;
   removeSeries: (seriesId: string) => Promise<void>;
   loadSeriesForVideo: (videoUrl: string) => Promise<void>;
   playNextEpisode: () => string | null;
@@ -163,13 +163,14 @@ export function useSeries(): UseSeriesReturn {
   const updateEpisode = useCallback(async (
     seriesId: string,
     episodeIndex: number,
-    updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>
+    updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>,
+    episodeUrl?: string
   ): Promise<void> => {
     if (!user) return;
 
     try {
       setError(null);
-      await updateEpisodeInSeries(user.uid, seriesId, episodeIndex, updates);
+      await updateEpisodeInSeries(user.uid, seriesId, episodeIndex, updates, episodeUrl);
 
       // Refresh current series if applicable
       if (currentSeries?.id === seriesId) {

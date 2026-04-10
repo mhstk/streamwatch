@@ -432,8 +432,8 @@ export default function Player() {
             duration: dur,
             progress: time,
             completed: progressPercent >= 90,
-            lastWatched: Timestamp.now(), // Update lastWatched to track most recent episode
-          });
+            lastWatched: Timestamp.now(),
+          }, videoUrl || undefined);
         } else if (!currentSeries && time > 10) {
           logger.warn('player', 'Not updating lastWatched - currentSeries is null', {
             videoUrl: videoUrl?.substring(0, 80),
@@ -462,7 +462,7 @@ export default function Player() {
 
       // Update episode duration in series
       if (currentSeries) {
-        updateEpisode(currentSeries.id, currentEpisodeIndex, { duration: dur });
+        updateEpisode(currentSeries.id, currentEpisodeIndex, { duration: dur }, videoUrl || undefined);
       }
     }
   }, [currentSeries, currentEpisodeIndex, updateEpisode, resumeTime, showResumePrompt]);
@@ -472,7 +472,7 @@ export default function Player() {
 
     if (currentSeries && hasNextEpisode) {
       // Mark current as completed
-      updateEpisode(currentSeries.id, currentEpisodeIndex, { completed: true });
+      updateEpisode(currentSeries.id, currentEpisodeIndex, { completed: true }, videoUrl || undefined);
       // Show next episode overlay
       setShowNextEpisode(true);
     }
