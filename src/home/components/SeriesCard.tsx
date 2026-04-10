@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Play } from 'lucide-react';
 import { Series } from '@/types';
-import { getPosterFromFilename } from '@/lib/tmdb';
+import { searchMedia } from '@/lib/tmdb';
 
 interface ContinueInfo {
   season: number;
@@ -50,8 +50,8 @@ export default function SeriesCard({ series, onClick, continueInfo }: SeriesCard
     let cancelled = false;
     const fetchPoster = async () => {
       try {
-        // Use series name or first episode title
-        const result = await getPosterFromFilename(series.name);
+        // Search TMDB using the series name directly as a TV show
+        const result = await searchMedia({ query: series.name, type: 'tv' });
         if (cancelled) return;
         setPoster(result.medium);
       } catch {
