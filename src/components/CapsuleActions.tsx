@@ -14,12 +14,12 @@ export default function CapsuleActions({ onSubtitles, onAddToSeries, sidebarOpen
       className="fixed top-[82px] z-10 transition-[right] duration-300"
       style={{ right: sidebarOpen ? 330 : 20, transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)' }}
     >
-      <div className="flex rounded-[28px] glass shadow-[0_4px_24px_rgba(0,0,0,0.5)]">
+      <div className="flex rounded-[14px] glass shadow-[0_4px_24px_rgba(0,0,0,0.5)]">
         {/* Subtitles — glass left */}
         <button
           onClick={onSubtitles}
           onMouseUp={blur}
-          className="group relative w-[58px] h-[50px] flex items-center justify-center cursor-pointer transition-all duration-250 text-sw-text/70 bg-[rgba(22,18,16,0.7)] border border-[rgba(44,36,32,0.5)] border-r-0 rounded-l-[28px] outline-none hover:text-sw-text hover:bg-[rgba(42,35,32,0.9)]"
+          className="group relative w-[58px] h-[50px] flex items-center justify-center cursor-pointer transition-all duration-250 text-sw-text/70 bg-[rgba(22,18,16,0.7)] border border-[rgba(44,36,32,0.5)] border-r-0 rounded-l-[14px] outline-none hover:text-sw-text hover:bg-[rgba(42,35,32,0.9)]"
           style={{ transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)' }}
         >
           <Subtitles size={21} />
@@ -34,7 +34,7 @@ export default function CapsuleActions({ onSubtitles, onAddToSeries, sidebarOpen
         <button
           onClick={onAddToSeries}
           onMouseUp={blur}
-          className="group relative w-[58px] h-[50px] flex items-center justify-center cursor-pointer transition-all duration-250 text-sw-text/85 bg-[rgba(153,27,27,0.65)] border border-[rgba(185,28,28,0.3)] border-l-0 rounded-r-[28px] outline-none hover:bg-[rgba(185,28,28,0.9)] hover:text-sw-text hover:shadow-[0_0_20px_rgba(185,28,28,0.3)]"
+          className="group relative w-[58px] h-[50px] flex items-center justify-center cursor-pointer transition-all duration-250 text-sw-text/85 bg-[rgba(153,27,27,0.65)] border border-[rgba(185,28,28,0.3)] border-l-0 rounded-r-[14px] outline-none hover:bg-[rgba(185,28,28,0.9)] hover:text-sw-text hover:shadow-[0_0_20px_rgba(185,28,28,0.3)]"
           style={{ transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)' }}
         >
           <FolderPlus size={21} />
