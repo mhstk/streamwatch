@@ -383,11 +383,17 @@ export async function createSeries(
  * and sort episodes by season then episodeNumber/index
  */
 function migrateAndSortEpisodes(episodes: any[]): Episode[] {
+  const seen = new Set<string>();
   return episodes
     .map((ep: any) => ({
       ...ep,
       season: ep.season ?? 1,
     }))
+    .filter((ep) => {
+      if (seen.has(ep.url)) return false;
+      seen.add(ep.url);
+      return true;
+    })
     .sort((a, b) => {
       // Sort by season first
       if (a.season !== b.season) {
@@ -494,6 +500,13 @@ export async function addEpisodeToSeries(
     }
 
     const currentEpisodes = seriesSnap.data().episodes || [];
+
+    // Skip if episode with this URL already exists
+    if (currentEpisodes.some((ep: any) => ep.url === episodeUrl)) {
+      logger.info('firestore', 'ADD_EPISODE_SKIPPED_DUPLICATE', { seriesId, url: episodeUrl.substring(0, 50) });
+      return;
+    }
+
     const newEpisode: Episode = {
       url: episodeUrl,
       title: episodeTitle || extractTitleFromUrl(episodeUrl),
