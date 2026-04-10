@@ -506,29 +506,37 @@ export async function addEpisodeToSeries(
 
     const currentEpisodes = seriesSnap.data().episodes || [];
 
-    // Skip if episode with this URL or same season+episodeNumber already exists
-    const isDuplicate = currentEpisodes.some((ep: any) =>
-      ep.url === episodeUrl ||
-      (episodeNumber != null && ep.episodeNumber === episodeNumber && (ep.season ?? 1) === (season ?? 1))
-    );
-    if (isDuplicate) {
-      logger.info('firestore', 'ADD_EPISODE_SKIPPED_DUPLICATE', { seriesId, url: episodeUrl.substring(0, 50), season, episodeNumber });
-      return;
-    }
+    // If same season+episodeNumber exists, replace it (new URL from different CDN)
+    const existingIdx = episodeNumber != null
+      ? currentEpisodes.findIndex((ep: any) => ep.episodeNumber === episodeNumber && (ep.season ?? 1) === (season ?? 1))
+      : currentEpisodes.findIndex((ep: any) => ep.url === episodeUrl);
 
     const newEpisode: Episode = {
       url: episodeUrl,
       title: episodeTitle || extractTitleFromUrl(episodeUrl),
-      index: currentEpisodes.length,
+      index: existingIdx >= 0 ? currentEpisodes[existingIdx].index : currentEpisodes.length,
       season: season ?? 1,
       episodeNumber: episodeNumber,
-      completed: false,
+      completed: existingIdx >= 0 ? currentEpisodes[existingIdx].completed : false,
+      ...(existingIdx >= 0 && currentEpisodes[existingIdx].progress ? { progress: currentEpisodes[existingIdx].progress } : {}),
+      ...(existingIdx >= 0 && currentEpisodes[existingIdx].duration ? { duration: currentEpisodes[existingIdx].duration } : {}),
+      ...(existingIdx >= 0 && currentEpisodes[existingIdx].lastWatched ? { lastWatched: currentEpisodes[existingIdx].lastWatched } : {}),
     };
 
-    await updateDoc(seriesRef, {
-      episodes: arrayUnion(newEpisode),
-      updatedAt: serverTimestamp(),
-    });
+    if (existingIdx >= 0) {
+      // Replace existing episode in-place
+      const updatedEpisodes = [...currentEpisodes];
+      updatedEpisodes[existingIdx] = newEpisode;
+      await updateDoc(seriesRef, {
+        episodes: updatedEpisodes,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await updateDoc(seriesRef, {
+        episodes: arrayUnion(newEpisode),
+        updatedAt: serverTimestamp(),
+      });
+    }
 
     logger.info('firestore', 'ADD_EPISODE_SUCCESS', { seriesId, episodeIndex: newEpisode.index, title: newEpisode.title });
   } catch (err) {
