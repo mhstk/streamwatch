@@ -103,8 +103,10 @@ export default function Player() {
     currentSeries,
     currentEpisodeIndex,
     hasNextEpisode,
+    hasPreviousEpisode,
     loadSeriesForVideo,
     playNextEpisode,
+    playPreviousEpisode,
     createNewSeries,
     addToSeries,
     updateEpisode,
@@ -484,6 +486,14 @@ export default function Player() {
     }
   }, [playNextEpisode, currentSeries, currentEpisodeIndex, navigateToVideo]);
 
+
+  const handlePlayPrevious = useCallback(() => {
+    const prevUrl = playPreviousEpisode();
+    if (prevUrl && currentSeries) {
+      const prevEpisode = currentSeries.episodes[currentEpisodeIndex - 1];
+      navigateToVideo(prevUrl, prevEpisode?.title);
+    }
+  }, [playPreviousEpisode, currentSeries, currentEpisodeIndex, navigateToVideo]);
 
   const handleReplay = useCallback(() => {
     setShowNextEpisode(false);
@@ -929,6 +939,26 @@ export default function Player() {
                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
                 <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[40%] text-[7px] font-bold">15</span>
               </button>
+
+              {/* Previous / Next Episode */}
+              {currentSeries && (
+                <>
+                  <button
+                    className={`transition-colors ${hasPreviousEpisode ? 'text-white hover:text-sw-accent cursor-pointer' : 'text-white/20 cursor-default'}`}
+                    onClick={hasPreviousEpisode ? handlePlayPrevious : undefined}
+                    title="Previous episode"
+                  >
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                  </button>
+                  <button
+                    className={`transition-colors ${hasNextEpisode ? 'text-white hover:text-sw-accent cursor-pointer' : 'text-white/20 cursor-default'}`}
+                    onClick={hasNextEpisode ? handlePlayNext : undefined}
+                    title="Next episode"
+                  >
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                  </button>
+                </>
+              )}
 
               {/* Time */}
               <span className="text-white text-sm font-mono tabular-nums">{formatTime(currentTime)} / {formatTime(duration)}</span>
