@@ -998,6 +998,7 @@ export default function Player() {
         <SeriesSidebar
           series={currentSeries}
           currentEpisodeIndex={currentEpisodeIndex}
+          currentVideoUrl={videoUrl || undefined}
           isOpen={showSidebar}
           onClose={() => setShowSidebar(false)}
           onEpisodeSelect={handleEpisodeSelect}

@@ -13,6 +13,7 @@ interface SeasonGroup {
 interface SeriesSidebarProps {
   series: Series;
   currentEpisodeIndex: number;
+  currentVideoUrl?: string;
   isOpen: boolean;
   onClose: () => void;
   onEpisodeSelect: (episode: Episode) => void;
@@ -22,6 +23,7 @@ interface SeriesSidebarProps {
 export default function SeriesSidebar({
   series,
   currentEpisodeIndex,
+  currentVideoUrl,
   isOpen,
   onClose,
   onEpisodeSelect,
@@ -64,7 +66,9 @@ export default function SeriesSidebar({
   const seasonCount = seasonGroups.length;
 
   // Get current episode's season
-  const currentEpisode = series.episodes[currentEpisodeIndex];
+  const currentEpisode = currentVideoUrl
+    ? series.episodes.find(ep => ep.url === currentVideoUrl)
+    : series.episodes[currentEpisodeIndex];
   const currentSeasonNumber = currentEpisode?.season ?? 1;
 
   // Auto-select season if only one exists, or go to current episode's season
@@ -252,7 +256,7 @@ export default function SeriesSidebar({
           /* Episodes List View */
           <div className="space-y-0.5">
             {selectedSeasonGroup?.episodes.map((episode) => {
-              const isPlaying = episode.index === currentEpisodeIndex;
+              const isPlaying = currentVideoUrl ? episode.url === currentVideoUrl : episode.index === currentEpisodeIndex;
               const isHovered = episode.index === hoveredIndex;
               const progress = episode.progress && episode.duration
                 ? Math.round((episode.progress / episode.duration) * 100)
