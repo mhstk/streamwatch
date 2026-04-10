@@ -1009,7 +1009,7 @@ export default function Player() {
       {/* Add to Series Modal */}
       <AddToSeriesModal
         isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={async () => { setShowAddModal(false); await refreshSeries(); if (videoUrl) await loadSeriesForVideo(videoUrl); }}
         allSeries={allSeries}
         videoUrl={videoUrl}
         videoTitle={title}
