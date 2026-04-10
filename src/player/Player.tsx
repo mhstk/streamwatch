@@ -745,8 +745,8 @@ export default function Player() {
       className={`h-screen overflow-hidden bg-black text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}
       onMouseUp={() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }}
     >
-      <PlayerTopBar sidebarOpen={showSidebar} onToggleSidebar={() => setShowSidebar(!showSidebar)} onShowShortcuts={() => setShowShortcuts(true)} hasSeries={!!currentSeries} />
-      <CapsuleActions sidebarOpen={showSidebar} onSubtitles={() => setShowSubtitleModal(true)} onAddToSeries={() => setShowAddModal(true)} />
+      <PlayerTopBar sidebarOpen={showSidebar} onToggleSidebar={() => setShowSidebar(!showSidebar)} onShowShortcuts={() => setShowShortcuts(true)} hasSeries={!!user && !!currentSeries} />
+      {user && <CapsuleActions sidebarOpen={showSidebar} onSubtitles={() => setShowSubtitleModal(true)} onAddToSeries={() => setShowAddModal(true)} />}
       <KeyboardLegend isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
       {/* Video Player */}
