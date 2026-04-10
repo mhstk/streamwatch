@@ -390,8 +390,13 @@ function migrateAndSortEpisodes(episodes: any[]): Episode[] {
       season: ep.season ?? 1,
     }))
     .filter((ep) => {
+      // Deduplicate by URL first
       if (seen.has(ep.url)) return false;
+      // Then by season+episodeNumber (same episode from different CDN URLs)
+      const key = `s${ep.season ?? 1}e${ep.episodeNumber ?? ep.index}`;
+      if (seen.has(key)) return false;
       seen.add(ep.url);
+      seen.add(key);
       return true;
     })
     .sort((a, b) => {
@@ -501,9 +506,13 @@ export async function addEpisodeToSeries(
 
     const currentEpisodes = seriesSnap.data().episodes || [];
 
-    // Skip if episode with this URL already exists
-    if (currentEpisodes.some((ep: any) => ep.url === episodeUrl)) {
-      logger.info('firestore', 'ADD_EPISODE_SKIPPED_DUPLICATE', { seriesId, url: episodeUrl.substring(0, 50) });
+    // Skip if episode with this URL or same season+episodeNumber already exists
+    const isDuplicate = currentEpisodes.some((ep: any) =>
+      ep.url === episodeUrl ||
+      (episodeNumber != null && ep.episodeNumber === episodeNumber && (ep.season ?? 1) === (season ?? 1))
+    );
+    if (isDuplicate) {
+      logger.info('firestore', 'ADD_EPISODE_SKIPPED_DUPLICATE', { seriesId, url: episodeUrl.substring(0, 50), season, episodeNumber });
       return;
     }
 
