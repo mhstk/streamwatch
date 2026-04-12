@@ -127,7 +127,7 @@ export default function AddToSeriesModal({
         console.log('[StreamWatch] Parsed current episode:', currentParsed);
 
         // Find related episodes
-        const related = findRelatedEpisodes(videoUrl, allUrls, 'next');
+        const related = findRelatedEpisodes(videoUrl, allUrls, 'all');
 
         // DEBUG: Log related episodes
         console.log('[StreamWatch] Related episodes found:', related);
