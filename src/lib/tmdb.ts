@@ -2,6 +2,7 @@
 // API Documentation: https://developer.themoviedb.org/docs
 
 import { logger } from './logger';
+import { parseMediaName } from './titleParser';
 
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
@@ -221,7 +222,7 @@ export async function getPosterFromFilename(filename: string): Promise<PosterRes
     const result = await searchMedia({
       query: parsed.title,
       year: parsed.year,
-      type: parsed.isSeries ? 'tv' : undefined,
+      type: parsed.isSeries ? 'tv' : 'movie',
     });
 
     if (result.info) {
@@ -236,7 +237,7 @@ export async function getPosterFromFilename(filename: string): Promise<PosterRes
   });
 }
 
-// Parse filename to extract title, year, and detect if it's a series
+// Parse filename/title to extract title, year, and detect if it's a series
 function parseFilename(filename: string): {
   title: string;
   year?: number;
@@ -244,69 +245,13 @@ function parseFilename(filename: string): {
   season?: number;
   episode?: number;
 } {
-  // Remove file extension
-  let name = filename.replace(/\.(mp4|mkv|avi|webm|mov|m4v)$/i, '');
-
-  // Replace common separators with spaces
-  name = name.replace(/[._-]/g, ' ');
-
-  // Detect season/episode patterns BEFORE cutting off quality info
-  const seasonEpisodePatterns = [
-    /[Ss](\d{1,2})[Ee](\d{1,2})/,
-    /(\d{1,2})x(\d{1,2})/,
-    /[Ss]eason\s*(\d{1,2})\s*[Ee]pisode\s*(\d{1,2})/i,
-  ];
-
-  let season: number | undefined;
-  let episode: number | undefined;
-  let isSeries = false;
-
-  for (const pattern of seasonEpisodePatterns) {
-    const match = name.match(pattern);
-    if (match) {
-      season = parseInt(match[1], 10);
-      episode = parseInt(match[2], 10);
-      isSeries = true;
-      // Don't remove yet, we'll cut at quality indicator
-      break;
-    }
-  }
-
-  // Find where the quality/technical info starts and cut everything after
-  // We need to find the EARLIEST match across all patterns
-  const qualityCutoffPattern = /\s+(360p|480p|576p|720p|1080p|1440p|2160p|4k|uhd|hdtv|webrip|web rip|bluray|blu ray|brrip|br rip|web dl|webdl|hdrip|dvdrip|dvd rip|hdcam|cam|ts|telesync|screener|r5|x264|x265|h264|h265|hevc|avc|xvid|divx|10bit|hdr|hdr10|aac|ac3|dts|flac|yts|rarbg|etrg|ettv|evo|sparks|proper|repack|internal)\b/i;
-
-  const cutoffMatch = name.match(qualityCutoffPattern);
-  if (cutoffMatch && cutoffMatch.index !== undefined) {
-    name = name.substring(0, cutoffMatch.index);
-  }
-
-  // Now remove the season/episode pattern from the title
-  for (const pattern of seasonEpisodePatterns) {
-    name = name.replace(pattern, '').trim();
-  }
-
-  // Extract year
-  let year: number | undefined;
-  const yearMatch = name.match(/[\s\(]*((?:19|20)\d{2})[\s\)]*/);
-  if (yearMatch) {
-    year = parseInt(yearMatch[1], 10);
-    name = name.replace(yearMatch[0], ' ').trim();
-  }
-
-  // Clean up brackets and multiple spaces
-  name = name
-    .replace(/\s*\([^)]*\)\s*/g, ' ')
-    .replace(/\s*\[[^\]]*\]\s*/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
+  const parsed = parseMediaName(filename);
   return {
-    title: name,
-    year,
-    isSeries,
-    season,
-    episode,
+    title: parsed.title,
+    year: parsed.year,
+    isSeries: parsed.kind === 'episode',
+    season: parsed.season,
+    episode: parsed.episode,
   };
 }
 

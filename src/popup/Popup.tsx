@@ -1,13 +1,44 @@
-import { useState, useEffect } from 'react';
-import { Play, Settings, Home, User, LogOut, PlayCircle, Layers, Clock, Plus } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Play, Settings, Home, User, LogOut, PlayCircle, Clock } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useRecentHistory } from '@/hooks/useRecentHistory';
-import { formatTime } from '@/lib/utils';
+import { useSeries } from '@/hooks/useSeries';
+import { buildLibrary } from '@/lib/library';
+import { formatEpisodeCode } from '@/lib/titleParser';
 import { logger } from '@/lib/logger';
 
 export default function Popup() {
   const { user, isLoading: isAuthLoading, error: authError, signIn, logOut } = useAuth();
-  const { history, isLoading: isHistoryLoading } = useRecentHistory(3);
+  // enough recent history to group episodes into their series
+  const { history, isLoading: isHistoryLoading } = useRecentHistory(60);
+  const { allSeries } = useSeries();
+
+  // same grouping as the home page: one row per series / movie
+  const continueWatching = useMemo(() => {
+    return buildLibrary(history, allSeries).continueWatching.slice(0, 4).map((item) => {
+      if (item.type === 'series') {
+        const next = item.next!;
+        return {
+          key: item.key,
+          title: item.name,
+          detail: formatEpisodeCode(next.season, next.episode),
+          url: next.url,
+          percent: next.progressPercent,
+        };
+      }
+      return {
+        key: item.key,
+        title: item.title,
+        detail: item.year ? String(item.year) : '',
+        url: item.entry.video.url,
+        percent: item.entry.video.progressPercent,
+      };
+    });
+  }, [history, allSeries]);
+
+  const openHome = (hash = '') => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/home/home.html') + hash });
+  };
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
@@ -15,17 +46,6 @@ export default function Popup() {
     // Trigger fade-in animation
     setTimeout(() => setIsReady(true), 50);
   }, []);
-
-  // Log state changes for debugging
-  useEffect(() => {
-    logger.debug('popup', 'State update', {
-      isAuthLoading,
-      isHistoryLoading,
-      hasUser: !!user,
-      historyCount: history.length,
-      authError
-    });
-  }, [isAuthLoading, isHistoryLoading, user, history.length, authError]);
 
   const handlePlayVideo = (url: string) => {
     const playerUrl = chrome.runtime.getURL(`index.html?url=${encodeURIComponent(url)}`);
@@ -41,14 +61,11 @@ export default function Popup() {
   };
 
   return (
-    <div className={`w-80 bg-sw-bg text-sw-text font-body min-h-[420px] transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
+    <div className={`w-80 bg-sw-bg text-sw-text font-body min-h-[320px] transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-sw-border">
         <button
-          onClick={() => {
-            const homeUrl = chrome.runtime.getURL('src/home/home.html');
-            chrome.tabs.create({ url: homeUrl });
-          }}
+          onClick={() => openHome()}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
         >
           <div className="bg-sw-accent rounded-md w-6 h-6 flex items-center justify-center">
@@ -58,10 +75,7 @@ export default function Popup() {
         </button>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => {
-              const homeUrl = chrome.runtime.getURL('src/home/home.html');
-              chrome.tabs.create({ url: homeUrl });
-            }}
+            onClick={() => openHome()}
             className="btn-icon w-8 h-8"
             title="Open StreamWatch"
           >
@@ -150,37 +164,36 @@ export default function Popup() {
               <User size={24} className="mx-auto text-sw-text-muted mb-2" />
               <p className="font-body text-[10px] text-sw-text-muted">Sign in to sync history</p>
             </div>
-          ) : history.length === 0 ? (
+          ) : continueWatching.length === 0 ? (
             <div className="p-4 bg-sw-surface border border-sw-border rounded-lg text-center">
               <PlayCircle size={24} className="mx-auto text-sw-text-muted mb-2" />
-              <p className="font-body text-[10px] text-sw-text-muted">No videos yet</p>
+              <p className="font-body text-[10px] text-sw-text-muted">Nothing in progress</p>
               <p className="font-body text-[10px] text-sw-text-muted mt-1">Right-click a video link to start</p>
             </div>
           ) : (
-            history.map((video) => (
+            continueWatching.map((item, index) => (
               <button
-                key={video.id}
-                onClick={() => handlePlayVideo(video.url)}
-                className="w-full bg-sw-surface border border-sw-border rounded-lg p-3 hover:bg-sw-elevated transition-colors text-left"
+                key={item.key}
+                onClick={() => handlePlayVideo(item.url)}
+                style={{ animationDelay: `${index * 40}ms` }}
+                className="w-full bg-sw-surface border border-sw-border rounded-lg p-3 hover:bg-sw-elevated hover:border-[#3a322e] transition-colors text-left animate-fade-up"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 bg-sw-accent/20 rounded-lg flex items-center justify-center flex-shrink-0">
                     <Play size={12} className="text-sw-accent" fill="currentColor" stroke="none" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-heading text-xs font-semibold text-sw-text truncate">{video.title}</p>
+                    <p className="font-heading text-xs font-semibold text-sw-text truncate">{item.title}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="font-body text-[10px] text-sw-text-muted">{formatTime(video.progress)} / {formatTime(video.duration)}</span>
-                      <span className="font-body text-[10px] text-sw-accent">{video.progressPercent}%</span>
+                      {item.detail && <span className="font-body text-[10px] text-sw-text-muted">{item.detail}</span>}
+                      <span className="font-body text-[10px] text-sw-accent">
+                        {item.percent > 0 ? `${item.percent}%` : 'Up next'}
+                      </span>
                     </div>
                   </div>
                 </div>
-                {/* Progress bar */}
                 <div className="mt-2 h-1 bg-sw-border rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-sw-accent rounded-full"
-                    style={{ width: `${video.progressPercent}%` }}
-                  />
+                  <div className="h-full bg-sw-accent rounded-full" style={{ width: `${item.percent}%` }} />
                 </div>
               </button>
             ))
@@ -188,33 +201,10 @@ export default function Popup() {
         </div>
       </div>
 
-      {/* Series */}
-      <div className="px-4 py-3 border-b border-sw-border">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-heading text-sm font-semibold text-sw-text flex items-center gap-2">
-            <Layers size={14} className="text-sw-text-muted" />
-            Series
-          </h2>
-        </div>
-        <div className="space-y-2">
-          <div className="p-4 bg-sw-surface border border-sw-border rounded-lg text-center">
-            <Layers size={24} className="mx-auto text-sw-text-muted mb-2" />
-            <p className="font-body text-[10px] text-sw-text-muted">No series yet</p>
-          </div>
-          <button className="w-full py-2.5 px-3 border border-dashed border-sw-border rounded-lg font-body text-[10px] text-sw-text-muted hover:border-sw-accent hover:text-sw-accent hover:bg-sw-accent/5 transition-all duration-200 flex items-center justify-center gap-2">
-            <Plus size={12} />
-            New Series
-          </button>
-        </div>
-      </div>
-
       {/* Footer */}
       <div className="p-4 border-t border-sw-border flex gap-2">
         <button
-          onClick={() => {
-            // Open settings page with history section
-            chrome.runtime.openOptionsPage();
-          }}
+          onClick={() => openHome('#history')}
           className="btn-secondary text-xs flex-1 flex items-center justify-center gap-2"
         >
           <Clock size={12} />

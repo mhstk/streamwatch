@@ -8,6 +8,7 @@ import {
   updateSeries,
   updateEpisodeInSeries,
   deleteSeries,
+  deleteAllSeries,
   findSeriesByVideoUrl,
 } from '@/lib/firestore';
 import { Series, Episode } from '@/types';
@@ -32,6 +33,7 @@ interface UseSeriesReturn {
   updateSeriesInfo: (seriesId: string, updates: Partial<Pick<Series, 'name' | 'currentEpisodeIndex'>>) => Promise<void>;
   updateEpisode: (seriesId: string, episodeIndex: number, updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed' | 'lastWatched'>>, episodeUrl?: string) => Promise<void>;
   removeSeries: (seriesId: string) => Promise<void>;
+  removeAllSeries: () => Promise<void>;
   loadSeriesForVideo: (videoUrl: string) => Promise<void>;
   playNextEpisode: () => string | null;
   playPreviousEpisode: () => string | null;
@@ -47,13 +49,6 @@ export function useSeries(): UseSeriesReturn {
   // Current series context
   const [currentSeries, setCurrentSeries] = useState<Series | null>(null);
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(0);
-
-  logger.debug('series', 'useSeries render', {
-    isAuthLoading,
-    hasUser: !!user,
-    seriesCount: allSeries.length,
-    currentSeriesId: currentSeries?.id,
-  });
 
   // Fetch all series
   const fetchAllSeries = useCallback(async () => {
@@ -163,7 +158,7 @@ export function useSeries(): UseSeriesReturn {
   const updateEpisode = useCallback(async (
     seriesId: string,
     episodeIndex: number,
-    updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>,
+    updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed' | 'lastWatched'>>,
     episodeUrl?: string
   ): Promise<void> => {
     if (!user) return;
@@ -172,16 +167,23 @@ export function useSeries(): UseSeriesReturn {
       setError(null);
       await updateEpisodeInSeries(user.uid, seriesId, episodeIndex, updates, episodeUrl);
 
-      // Refresh current series if applicable
-      if (currentSeries?.id === seriesId) {
-        const updated = await getSeries(user.uid, seriesId);
-        if (updated) setCurrentSeries(updated);
-      }
+      // Mirror the change locally instead of re-downloading the whole series
+      // after every progress tick.
+      setCurrentSeries(prev => {
+        if (!prev || prev.id !== seriesId) return prev;
+        const idx = episodeUrl
+          ? prev.episodes.findIndex(ep => ep.url === episodeUrl)
+          : episodeIndex;
+        if (idx < 0 || idx >= prev.episodes.length) return prev;
+        const episodes = [...prev.episodes];
+        episodes[idx] = { ...episodes[idx], ...updates };
+        return { ...prev, episodes };
+      });
     } catch (err) {
       logger.error('series', 'Failed to update episode', err);
       setError('Failed to update episode');
     }
-  }, [user, currentSeries]);
+  }, [user]);
 
   // Delete series
   const removeSeries = useCallback(async (seriesId: string): Promise<void> => {
@@ -202,6 +204,22 @@ export function useSeries(): UseSeriesReturn {
     }
   }, [user, fetchAllSeries, currentSeries]);
 
+  // Delete every series
+  const removeAllSeries = useCallback(async (): Promise<void> => {
+    if (!user) return;
+
+    try {
+      setError(null);
+      await deleteAllSeries(user.uid);
+      setAllSeries([]);
+      setCurrentSeries(null);
+      setCurrentEpisodeIndex(0);
+    } catch (err) {
+      logger.error('series', 'Failed to delete all series', err);
+      setError('Failed to delete series');
+    }
+  }, [user]);
+
   // Load series context for a video URL
   const loadSeriesForVideo = useCallback(async (videoUrl: string): Promise<void> => {
     if (!user) {
@@ -215,6 +233,15 @@ export function useSeries(): UseSeriesReturn {
       const result = await findSeriesByVideoUrl(user.uid, videoUrl);
 
       if (result) {
+        // Same episode behind a new link: remember the new link so progress
+        // updates and "now playing" keep working (old links usually expire).
+        const matched = result.series.episodes[result.episodeIndex];
+        if (matched && matched.url !== videoUrl) {
+          const oldUrl = matched.url;
+          result.series.episodes[result.episodeIndex] = { ...matched, url: videoUrl };
+          updateEpisodeInSeries(user.uid, result.series.id, result.episodeIndex, { url: videoUrl }, oldUrl)
+            .catch(err => logger.error('series', 'Failed to refresh episode link', err));
+        }
         setCurrentSeries(result.series);
         setCurrentEpisodeIndex(result.episodeIndex);
         logger.info('series', 'Found series for video', {
@@ -300,6 +327,7 @@ export function useSeries(): UseSeriesReturn {
     updateSeriesInfo,
     updateEpisode,
     removeSeries,
+    removeAllSeries,
     loadSeriesForVideo,
     playNextEpisode,
     playPreviousEpisode,

@@ -26,7 +26,7 @@ export interface SubtitleSource {
 interface SubtitleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddSubtitle: (source: SubtitleSource) => void;
+  onAddSubtitle: (source: SubtitleSource) => void | Promise<void>;
   currentSubtitles: { label: string; src: string }[];
   onRemoveSubtitle: (index: number) => void;
   activeSubtitleIndex: number | null;
@@ -52,6 +52,9 @@ export default function SubtitleModal({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const backdropPressRef = useRef(false);
+  const [addedIds, setAddedIds] = useState<number[]>([]);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,23 +66,34 @@ export default function SubtitleModal({
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Extract search terms from video title on mount
-  // Use formatSearchQuery to keep season/episode info but remove quality/codec strings
+  // Pre-fill the search box from the video title. Runs again when the video
+  // changes, so the next episode doesn't keep the previous episode's query.
   useEffect(() => {
-    if (videoTitle && !searchQuery) {
-      setSearchQuery(formatSearchQuery(videoTitle));
-    }
+    setSearchQuery(videoTitle ? formatSearchQuery(videoTitle) : '');
+    setSearchResults([]);
+    setFoundMovie(null);
+    setHasSearched(false);
+    setAddedIds([]);
   }, [videoTitle]);
 
-  // Reset state when modal closes
+  // Reset transient state when the dialog closes
   useEffect(() => {
     if (!isOpen) {
       setError(null);
       setSearchError(null);
-      setSearchResults([]);
-      setHasSearched(false);
     }
   }, [isOpen]);
+
+  // Put the cursor in the search box as soon as the dialog (or the tab) opens
+  useEffect(() => {
+    if (isOpen && activeTab === 'search') {
+      const id = requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+      return () => cancelAnimationFrame(id);
+    }
+  }, [isOpen, activeTab]);
 
   if (!isOpen) return null;
 
@@ -95,12 +109,13 @@ export default function SubtitleModal({
     setFoundMovie(null);
 
     try {
-      const { cleanTitle, season, episode } = extractSearchTerms(searchQuery);
+      const { cleanTitle, season, episode, year } = extractSearchTerms(searchQuery);
       const result = await searchSubtitles({
         query: cleanTitle,
         language: selectedLanguage,
-        season: season,
-        episode: episode,
+        season,
+        episode,
+        year,
       });
       setSearchResults(result.results);
       setFoundMovie(result.movie || null);
@@ -132,7 +147,7 @@ export default function SubtitleModal({
       const blobUrl = createSubtitleBlobUrl(content);
 
       // Add the subtitle with metadata for saving preference
-      onAddSubtitle({
+      await onAddSubtitle({
         type: 'search',
         data: blobUrl,
         label: `${result.languageName} - ${result.release}`,
@@ -141,6 +156,7 @@ export default function SubtitleModal({
         languageName: result.languageName,
         release: result.release,
       });
+      setAddedIds(prev => [...prev, result.id]);
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Download failed');
     } finally {
@@ -158,7 +174,7 @@ export default function SubtitleModal({
     setError(null);
 
     try {
-      onAddSubtitle({
+      await onAddSubtitle({
         type: 'url',
         data: url.trim(),
         label: label.trim() || 'Subtitle',
@@ -172,17 +188,22 @@ export default function SubtitleModal({
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const fileName = file.name.replace(/\.(srt|vtt)$/i, '');
-    onAddSubtitle({
-      type: 'file',
-      data: file,
-      label: label.trim() || fileName || 'Subtitle',
-    });
-    setLabel('');
+    setError(null);
+    try {
+      await onAddSubtitle({
+        type: 'file',
+        data: file,
+        label: label.trim() || fileName || 'Subtitle',
+      });
+      setLabel('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not read that subtitle file');
+    }
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -197,9 +218,12 @@ export default function SubtitleModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in"
       style={{ backdropFilter: 'blur(14px)' }}
-      onClick={onClose}
+      // close only when the press started on the backdrop, not when a text
+      // selection drag ends outside the dialog
+      onMouseDown={(e) => { backdropPressRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (backdropPressRef.current && e.target === e.currentTarget) onClose(); }}
     >
       <div
         className="bg-[#161210] border border-[rgba(44,36,32,0.4)] rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.7)] w-full max-w-lg animate-scale-in max-h-[90vh] flex flex-col"
@@ -225,12 +249,12 @@ export default function SubtitleModal({
                   onClick={() => onSelectSubtitle(null)}
                   className={`w-full flex items-center justify-between py-2.5 px-3 border-b border-[#1e1a17] transition-colors rounded-lg ${
                     activeSubtitleIndex === null
-                      ? 'text-[#B91C1C] bg-[rgba(185,28,28,0.07)]'
+                      ? 'text-sw-accent bg-sw-accent/[0.07]'
                       : 'text-[#a39e99] hover:bg-[#1e1a17]'
                   }`}
                 >
                   <span className="text-sm">Off</span>
-                  {activeSubtitleIndex === null && <Check size={14} className="text-[#B91C1C]" />}
+                  {activeSubtitleIndex === null && <Check size={14} className="text-sw-accent" />}
                 </button>
 
                 {currentSubtitles.map((sub, index) => (
@@ -238,23 +262,23 @@ export default function SubtitleModal({
                     key={index}
                     className={`flex items-center justify-between py-2.5 px-3 border-b border-[#1e1a17] transition-colors rounded-lg ${
                       activeSubtitleIndex === index
-                        ? 'text-[#B91C1C] bg-[rgba(185,28,28,0.07)]'
+                        ? 'text-sw-accent bg-sw-accent/[0.07]'
                         : 'text-[#f0ece8] hover:bg-[#1e1a17]'
                     }`}
                   >
                     <button
                       onClick={() => onSelectSubtitle(index)}
-                      className="flex-1 text-left text-sm truncate hover:text-[#B91C1C] transition-colors"
+                      className="flex-1 text-left text-sm truncate hover:text-sw-accent transition-colors"
                     >
                       {sub.label}
                     </button>
                     <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                       {activeSubtitleIndex === index && (
-                        <Check size={14} className="text-[#B91C1C]" />
+                        <Check size={14} className="text-sw-accent" />
                       )}
                       <button
                         onClick={() => onRemoveSubtitle(index)}
-                        className="btn-icon w-6 h-6 text-[#6b6560] hover:text-[#B91C1C]"
+                        className="btn-icon w-6 h-6 text-[#6b6560] hover:text-sw-accent"
                         title="Remove subtitle"
                       >
                         <Trash2 size={13} />
@@ -274,7 +298,7 @@ export default function SubtitleModal({
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex-1 py-2.5 text-xs font-medium text-center font-body transition-colors duration-200 border-b-2 border-transparent cursor-pointer flex items-center justify-center gap-1.5 ${
                   activeTab === tab.id
-                    ? 'text-[#f0ece8] border-b-[#B91C1C]'
+                    ? 'text-[#f0ece8] border-b-sw-accent'
                     : 'text-[#6b6560] hover:text-[#a39e99]'
                 }`}
               >
@@ -290,12 +314,13 @@ export default function SubtitleModal({
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <input
+                    ref={searchInputRef}
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                     placeholder="Movie or TV show name..."
-                    className="input flex-1"
+                    className="input flex-1 min-w-0"
                   />
                   <select
                     value={selectedLanguage}
@@ -329,14 +354,14 @@ export default function SubtitleModal({
                 </button>
 
                 {searchError && (
-                  <p className="text-[#B91C1C] text-xs text-center">{searchError}</p>
+                  <p className="text-sw-accent text-xs text-center">{searchError}</p>
                 )}
 
                 {/* Found Movie */}
                 {foundMovie && (
                   <div className="bg-[#1e1a17] border border-[#2c2420] rounded-xl p-3 flex items-center gap-3">
-                    <div className="w-8 h-8 bg-[#B91C1C]/15 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-[#B91C1C]" fill="currentColor" viewBox="0 0 24 24">
+                    <div className="w-8 h-8 bg-sw-accent/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <svg className="w-4 h-4 text-sw-accent" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M8 5v14l11-7z"/>
                       </svg>
                     </div>
@@ -365,7 +390,7 @@ export default function SubtitleModal({
                             {result.release}
                           </p>
                           <div className="flex items-center gap-2 text-xs text-[#6b6560] mt-1 flex-wrap">
-                            <span className="bg-[#B91C1C]/20 text-[#B91C1C] px-1.5 py-0.5 rounded">
+                            <span className="bg-sw-accent/20 text-sw-accent px-1.5 py-0.5 rounded">
                               {result.languageName}
                             </span>
                             {result.hearingImpaired && (
@@ -390,15 +415,17 @@ export default function SubtitleModal({
                         </div>
                         <button
                           onClick={() => handleDownloadSubtitle(result)}
-                          disabled={downloadingId === result.id}
-                          className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1 flex-shrink-0"
+                          disabled={downloadingId !== null || addedIds.includes(result.id)}
+                          className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1 flex-shrink-0 disabled:opacity-60 disabled:cursor-default"
                         >
                           {downloadingId === result.id ? (
                             <div className="w-3 h-3 border-2 border-[#f0ece8]/30 border-t-[#f0ece8] rounded-full animate-spin" />
+                          ) : addedIds.includes(result.id) ? (
+                            <Check size={13} className="text-green-400" />
                           ) : (
                             <Download size={13} />
                           )}
-                          Add
+                          {addedIds.includes(result.id) ? 'Added' : 'Add'}
                         </button>
                       </div>
                     ))}
@@ -435,7 +462,7 @@ export default function SubtitleModal({
                   className="input w-full"
                 />
                 {error && (
-                  <p className="text-[#B91C1C] text-xs">{error}</p>
+                  <p className="text-sw-accent text-xs">{error}</p>
                 )}
                 <button
                   onClick={handleUrlSubmit}
@@ -468,9 +495,12 @@ export default function SubtitleModal({
                   className="hidden"
                   id="subtitle-file"
                 />
+                {error && (
+                  <p className="text-sw-accent text-xs">{error}</p>
+                )}
                 <label
                   htmlFor="subtitle-file"
-                  className="flex flex-col items-center justify-center gap-2 w-full py-8 bg-[#1e1a17] border-2 border-dashed border-[#2c2420] rounded-xl text-[#a39e99] hover:border-[#B91C1C] hover:text-[#f0ece8] cursor-pointer transition-colors"
+                  className="flex flex-col items-center justify-center gap-2 w-full py-8 bg-[#1e1a17] border-2 border-dashed border-[#2c2420] rounded-xl text-[#a39e99] hover:border-sw-accent hover:text-[#f0ece8] cursor-pointer transition-colors"
                 >
                   <Upload size={36} />
                   <span className="text-sm font-medium">Choose SRT or VTT file</span>
@@ -481,7 +511,11 @@ export default function SubtitleModal({
 
             {/* Keyboard hint */}
             <p className="text-xs text-[#6b6560] text-center">
-              Press <kbd className="px-1.5 py-0.5 bg-[#1e1a17] border border-[#2c2420] rounded text-[10px]">C</kbd> to toggle subtitles on/off
+              Press <kbd className="px-1.5 py-0.5 bg-[#1e1a17] border border-[#2c2420] rounded text-[10px]">C</kbd> to toggle subtitles
+              {' \u00b7 '}
+              <kbd className="px-1.5 py-0.5 bg-[#1e1a17] border border-[#2c2420] rounded text-[10px]">Z</kbd>
+              {' / '}
+              <kbd className="px-1.5 py-0.5 bg-[#1e1a17] border border-[#2c2420] rounded text-[10px]">X</kbd> to shift timing
             </p>
           </div>
         </div>

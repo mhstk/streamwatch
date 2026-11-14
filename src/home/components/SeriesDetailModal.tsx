@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { X, Play, Check, Trash2, ChevronRight } from 'lucide-react';
 import { Series, Episode } from '@/types';
 import { formatTime } from '@/lib/utils';
-import { getPosterFromFilename } from '@/lib/tmdb';
+import { episodeLabel } from '@/lib/library';
 
 interface SeasonGroup {
   season: number;
@@ -30,7 +30,6 @@ export default function SeriesDetailModal({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [_poster, setPoster] = useState<string | null>(null);
 
   // Reset state when modal opens/closes or series changes
   useEffect(() => {
@@ -41,26 +40,15 @@ export default function SeriesDetailModal({
     }
   }, [isOpen, series?.id]);
 
-  // Fetch poster
+  // Escape closes the dialog
   useEffect(() => {
-    if (!series) {
-      setPoster(null);
-      return;
-    }
-
-    let cancelled = false;
-    const fetchPoster = async () => {
-      try {
-        const result = await getPosterFromFilename(series.name);
-        if (!cancelled) setPoster(result.large || result.medium);
-      } catch {
-        // Ignore errors
-      }
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
     };
-
-    fetchPoster();
-    return () => { cancelled = true; };
-  }, [series?.name]);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
 
   // Group episodes by season
   const seasonGroups = useMemo((): SeasonGroup[] => {
@@ -147,7 +135,7 @@ export default function SeriesDetailModal({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 glass"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 glass animate-fade-in"
         onClick={onClose}
       />
 
@@ -314,7 +302,7 @@ export default function SeriesDetailModal({
                       {/* Episode Info */}
                       <div className="flex-1 min-w-0">
                         <p className="font-heading text-sm font-semibold text-sw-text truncate">
-                          {episode.title}
+                          {episodeLabel(episode)}
                         </p>
 
                         <div className="flex items-center gap-2 mt-0.5 text-xs">

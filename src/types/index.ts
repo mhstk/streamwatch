@@ -14,6 +14,7 @@ export interface VideoHistory {
   createdAt: Timestamp;
   seriesId?: string;             // If part of a series
   episodeIndex?: number;         // Position in series
+  sourcePage?: string;           // Page the link was opened from (to get a fresh link)
   // Poster info from TMDB (fetched once, stored)
   posterUrl?: string;            // Medium size poster URL
   backdropUrl?: string;          // Backdrop image URL

@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Episode, Series } from '@/types';
 import { logger } from '@/lib/logger';
+import { episodeLabel } from '@/lib/library';
 
 interface NextEpisodeOverlayProps {
   series: Series;
   currentEpisodeIndex: number;
   isVisible: boolean;
+  autoplay?: boolean;     // count down and play automatically
   autoplayDelay?: number; // seconds
   onPlayNext: () => void;
   onCancel: () => void;
@@ -17,6 +19,7 @@ export default function NextEpisodeOverlay({
   series,
   currentEpisodeIndex,
   isVisible,
+  autoplay = true,
   autoplayDelay = 5,
   onPlayNext,
   onCancel,
@@ -24,41 +27,29 @@ export default function NextEpisodeOverlay({
   sidebarOpen,
 }: NextEpisodeOverlayProps) {
   const [countdown, setCountdown] = useState(autoplayDelay);
-  const [isPaused, setIsPaused] = useState(false);
+  const [isPaused, setIsPaused] = useState(!autoplay);
 
   const nextEpisode: Episode | undefined = series.episodes[currentEpisodeIndex + 1];
 
-  // Reset countdown when overlay becomes visible
+  // Reset the countdown whenever the overlay is shown or hidden
   useEffect(() => {
-    if (isVisible) {
-      setCountdown(autoplayDelay);
-      setIsPaused(false);
-      logger.info('player', 'NEXT_EPISODE_OVERLAY_SHOWN', {
-        seriesName: series.name,
-        nextEpisodeIndex: currentEpisodeIndex + 1,
-        nextEpisodeTitle: nextEpisode?.title,
-        autoplayDelay,
-      });
-    }
-  }, [isVisible, autoplayDelay, series.name, currentEpisodeIndex, nextEpisode?.title]);
+    setCountdown(autoplayDelay);
+    setIsPaused(!autoplay);
+  }, [isVisible, autoplay, autoplayDelay]);
 
   // Countdown timer
   useEffect(() => {
-    if (!isVisible || isPaused || countdown <= 0) return;
+    if (!isVisible || isPaused || !nextEpisode) return;
 
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          logger.info('player', 'AUTOPLAY_TRIGGERED', { nextEpisodeTitle: nextEpisode?.title });
-          onPlayNext();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (countdown <= 0) {
+      logger.info('player', 'AUTOPLAY_TRIGGERED');
+      onPlayNext();
+      return;
+    }
 
-    return () => clearInterval(timer);
-  }, [isVisible, isPaused, countdown, onPlayNext, nextEpisode?.title]);
+    const timer = setTimeout(() => setCountdown((prev) => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [isVisible, isPaused, countdown, onPlayNext, nextEpisode]);
 
   const handlePauseToggle = useCallback(() => {
     setIsPaused((prev) => !prev);
@@ -79,12 +70,14 @@ export default function NextEpisodeOverlay({
 
       {/* Episode info */}
       <div className="mb-3">
-        <p className="text-sw-text-secondary text-[11px] font-body mb-0.5">{series.name} &middot; Episode {currentEpisodeIndex + 2}</p>
-        <h3 className="font-heading text-sm font-semibold text-sw-text truncate">{nextEpisode.title}</h3>
+        <p className="text-sw-text-secondary text-[11px] font-body mb-0.5 truncate">{series.name}</p>
+        <h3 className="font-heading text-sm font-semibold text-sw-text truncate">
+          {nextEpisode.season ? `Season ${nextEpisode.season} \u00b7 ` : ''}{episodeLabel(nextEpisode)}
+        </h3>
       </div>
 
       {/* Timer bar */}
-      <div className="h-0.5 bg-sw-border rounded-sm mb-3 overflow-hidden">
+      <div className={`h-0.5 bg-sw-border rounded-sm mb-3 overflow-hidden ${autoplay ? '' : 'hidden'}`}>
         <div
           className="h-full bg-sw-accent rounded-sm transition-all duration-1000 ease-linear"
           style={{ width: `${progress}%` }}
@@ -105,7 +98,7 @@ export default function NextEpisodeOverlay({
 
         <button
           onClick={handlePauseToggle}
-          className="btn-secondary p-2"
+          className={`btn-secondary p-2 ${autoplay ? '' : 'hidden'}`}
           title={isPaused ? 'Resume countdown' : 'Pause countdown'}
         >
           {isPaused ? (

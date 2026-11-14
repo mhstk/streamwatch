@@ -1,4 +1,5 @@
 import { VIDEO_EXTENSIONS } from './constants';
+import { getVideoTitle } from './titleParser';
 
 /**
  * Check if a URL points to a video file based on extension
@@ -29,26 +30,10 @@ export function extractFilename(url: string): string {
 
 /**
  * Extract human-readable title from URL
- * Removes extension and replaces separators with spaces
+ * ("Friends S05E16", "Saltburn (2023)") - quality/codec/group tags removed
  */
 export function extractTitleFromUrl(url: string): string {
-  try {
-    const filename = extractFilename(url);
-    if (!filename) return 'Unknown Video';
-
-    // Remove extension
-    const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
-
-    // Replace common separators with spaces
-    const title = nameWithoutExt
-      .replace(/[_\-\.]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return title || 'Unknown Video';
-  } catch {
-    return 'Unknown Video';
-  }
+  return getVideoTitle(url);
 }
 
 /**

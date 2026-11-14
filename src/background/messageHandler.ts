@@ -1,18 +1,51 @@
 import { ExtensionMessage } from '@/types';
+import { mediaKeyFromUrl } from '@/lib/titleParser';
 
-// Store source page info when videos are opened
-const videoSourceMap = new Map<string, { sourceUrl: string; sourceTabId?: number; timestamp: number }>();
+interface VideoSource {
+  sourceUrl: string;
+  sourceTabId?: number;
+  timestamp: number;
+}
+
+// Where each video link was opened from.
+// The service worker is shut down after ~30s of inactivity, which wipes any
+// in-memory state - so this lives in chrome.storage.session (kept until the
+// browser closes) with the Map only as a fast path.
+const videoSourceMap = new Map<string, VideoSource>();
+const SOURCE_KEY_PREFIX = 'videoSource:';
+
+function sourceStorageKey(videoUrl: string): string {
+  // keyed by what the video is, so a re-issued link still finds its page
+  return SOURCE_KEY_PREFIX + mediaKeyFromUrl(videoUrl);
+}
 
 /**
  * Register a video source (exported for use by other background modules)
  */
 export function registerVideoSource(videoUrl: string, sourceUrl: string, sourceTabId?: number): void {
-  videoSourceMap.set(videoUrl, {
-    sourceUrl,
-    sourceTabId,
-    timestamp: Date.now(),
+  const source: VideoSource = { sourceUrl, sourceTabId, timestamp: Date.now() };
+  videoSourceMap.set(videoUrl, source);
+  try {
+    chrome.storage.session.set({ [sourceStorageKey(videoUrl)]: source });
+  } catch {
+    // storage.session unavailable - the in-memory copy still works for a while
+  }
+}
+
+function getVideoSource(videoUrl: string): Promise<VideoSource | undefined> {
+  const cached = videoSourceMap.get(videoUrl);
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve) => {
+    try {
+      const key = sourceStorageKey(videoUrl);
+      chrome.storage.session.get(key, (result) => {
+        void chrome.runtime.lastError;
+        resolve(result?.[key] as VideoSource | undefined);
+      });
+    } catch {
+      resolve(undefined);
+    }
   });
-  console.log('Registered video source:', videoUrl, '->', sourceUrl);
 }
 
 /**
@@ -88,12 +121,7 @@ function handlePlayVideo(
   const sourceTabId = payload.sourceTabId || sender.tab?.id;
 
   if (sourceUrl) {
-    videoSourceMap.set(payload.url, {
-      sourceUrl,
-      sourceTabId,
-      timestamp: Date.now(),
-    });
-    console.log('Stored video source:', payload.url, '->', sourceUrl);
+    registerVideoSource(payload.url, sourceUrl, sourceTabId);
   }
 
   chrome.tabs.create({ url: playerUrl, active: true }, (tab) => {
@@ -178,12 +206,7 @@ function handleRegisterVideoSource(
   payload: { videoUrl: string; sourceUrl: string; sourceTabId?: number },
   sendResponse: (response: unknown) => void
 ): void {
-  videoSourceMap.set(payload.videoUrl, {
-    sourceUrl: payload.sourceUrl,
-    sourceTabId: payload.sourceTabId,
-    timestamp: Date.now(),
-  });
-  console.log('Registered video source:', payload.videoUrl, '->', payload.sourceUrl);
+  registerVideoSource(payload.videoUrl, payload.sourceUrl, payload.sourceTabId);
   sendResponse({ success: true });
 }
 
@@ -194,22 +217,23 @@ function handleGetVideoSource(
   payload: { videoUrl: string },
   sendResponse: (response: unknown) => void
 ): void {
-  const source = videoSourceMap.get(payload.videoUrl);
-  if (source) {
-    sendResponse({ success: true, ...source });
-  } else {
-    sendResponse({ success: false, error: 'Source not found' });
-  }
+  getVideoSource(payload.videoUrl).then((source) => {
+    if (source) {
+      sendResponse({ success: true, ...source });
+    } else {
+      sendResponse({ success: false, error: 'Source not found' });
+    }
+  });
 }
 
 /**
  * Scan the source page for other video links
  */
-function handleScanSourcePage(
+async function handleScanSourcePage(
   payload: { videoUrl: string },
   sendResponse: (response: unknown) => void
-): void {
-  const source = videoSourceMap.get(payload.videoUrl);
+): Promise<void> {
+  const source = await getVideoSource(payload.videoUrl);
 
   if (!source) {
     // Try to find a tab with the video URL's domain

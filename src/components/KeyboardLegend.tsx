@@ -24,14 +24,16 @@ const sections = [
     shortcuts: [
       { action: 'Frame back / forward', keys: [',', '.'] },
       { action: 'Start / End', keys: ['Home', 'End'] },
-      { action: 'Next episode', keys: ['N'] },
+      { action: 'Slower / faster', keys: ['<', '>'] },
+      { action: 'Next / previous episode', keys: ['N', 'P'] },
     ],
   },
   {
     title: 'Subtitles',
     shortcuts: [
       { action: 'Toggle subtitles', keys: ['C'] },
-      { action: 'Subtitle offset +/\u2212', keys: ['+', '\u2212'] },
+      { action: 'Subtitles earlier / later', keys: ['Z', 'X'] },
+      { action: 'Reset subtitle timing', keys: ['R'] },
     ],
   },
 ];
