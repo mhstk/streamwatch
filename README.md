@@ -68,6 +68,16 @@ npm run dev
 npm run build
 ```
 
+### Try it without installing
+
+```bash
+npm run demo
+```
+
+Then open http://localhost:5199/src/home/home.html. This serves the extension pages in a normal
+browser tab with a fake signed-in user and sample data (see `dev-harness/`). Add `?reset` to the
+URL to restore the sample data.
+
 ## Tech Stack
 
 - React 18 + TypeScript

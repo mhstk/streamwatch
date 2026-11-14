@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Check } from 'lucide-react';
 import { Series, Episode } from '@/types';
 import { formatTime } from '@/lib/utils';
+import { episodeLabel } from '@/lib/library';
 
 interface SeasonGroup {
   season: number;
@@ -271,7 +272,7 @@ export default function SeriesSidebar({
                   onMouseLeave={() => setHoveredIndex(null)}
                   className={`w-full flex items-center gap-3 px-[18px] py-2.5 cursor-pointer transition-colors duration-150 border-l-[3px] text-left ${
                     isPlaying
-                      ? 'bg-[rgba(30,26,23,0.5)] !border-l-[#B91C1C]'
+                      ? 'bg-[rgba(30,26,23,0.5)] !border-l-sw-accent'
                       : episode.completed
                       ? 'border-transparent opacity-50 hover:opacity-80'
                       : 'border-transparent hover:bg-[rgba(30,26,23,0.4)]'
@@ -287,7 +288,7 @@ export default function SeriesSidebar({
                   {/* Episode Info */}
                   <div className="flex-1 min-w-0">
                     <p className="font-body text-sm font-medium text-sw-text truncate">
-                      {episode.title}
+                      {episodeLabel(episode)}
                     </p>
 
                     {/* Meta Info */}

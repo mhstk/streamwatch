@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Plus, Layers, CheckCircle2 } from 'lucide-react';
 import { Series } from '@/types';
 import { logger } from '@/lib/logger';
 import { parseEpisodeInfo, findRelatedEpisodes, ParsedEpisode } from '@/lib/episodeParser';
+import { isSameMedia } from '@/lib/titleParser';
 
 // Simple fuzzy matching function
 function fuzzyMatch(query: string, target: string): number {
@@ -68,6 +69,7 @@ export default function AddToSeriesModal({
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const backdropPressRef = useRef(false);
 
   // Auto-detect state
   const [isScanning, setIsScanning] = useState(false);
@@ -94,7 +96,6 @@ export default function AddToSeriesModal({
 
   // Define scanForEpisodes BEFORE the useEffect that uses it
   const scanForEpisodes = useCallback(async () => {
-    console.log('[StreamWatch] scanForEpisodes called!');
     setIsScanning(true);
     logger.info('player', 'Scanning for episodes...', { videoUrl });
 
@@ -111,26 +112,12 @@ export default function AddToSeriesModal({
         );
       });
 
-      // DEBUG: Log full response
-      console.log('[StreamWatch] SCAN_SOURCE_PAGE response:', response);
-
-      if (response.success && response.allLinks) {
+      if (response?.success && response.allLinks) {
         const allUrls = response.allLinks.map(l => l.url);
         logger.info('player', 'Found video links on page', { count: allUrls.length });
 
-        // DEBUG: Log all found links
-        console.log('[StreamWatch] All video links found:', response.allLinks);
-        console.log('[StreamWatch] Current video URL:', videoUrl);
-
-        // DEBUG: Log current episode info
-        const currentParsed = parseEpisodeInfo(videoUrl);
-        console.log('[StreamWatch] Parsed current episode:', currentParsed);
-
         // Find related episodes
         const related = findRelatedEpisodes(videoUrl, allUrls, 'all');
-
-        // DEBUG: Log related episodes
-        console.log('[StreamWatch] Related episodes found:', related);
 
         // Convert to DetectedEpisode with selected state
         const detected: DetectedEpisode[] = related.map(ep => ({
@@ -146,12 +133,10 @@ export default function AddToSeriesModal({
           // Keep in select mode but show the auto-detect option
         }
       } else {
-        logger.warn('player', 'Failed to scan for episodes', { error: response.error });
-        console.log('[StreamWatch] Scan failed:', response);
+        logger.warn('player', 'Failed to scan for episodes', { error: response?.error });
       }
     } catch (err) {
       logger.error('player', 'Error scanning for episodes', err);
-      console.error('[StreamWatch] Error:', err);
     } finally {
       setIsScanning(false);
     }
@@ -160,7 +145,8 @@ export default function AddToSeriesModal({
   // Parse current episode on mount
   useEffect(() => {
     if (isOpen && videoUrl) {
-      const parsed = parseEpisodeInfo(videoUrl);
+      // the user is explicitly building a series here, so accept looser episode numbering
+      const parsed = parseEpisodeInfo(videoUrl, { loose: true });
       setCurrentEpisodeInfo(parsed);
 
       if (parsed) {
@@ -172,9 +158,7 @@ export default function AddToSeriesModal({
 
   // Scan for episodes when modal opens
   useEffect(() => {
-    console.log('[StreamWatch] useEffect triggered, isOpen:', isOpen, 'videoUrl:', videoUrl);
     if (isOpen && videoUrl) {
-      console.log('[StreamWatch] Calling scanForEpisodes...');
       scanForEpisodes();
     }
   }, [isOpen, videoUrl, scanForEpisodes]);
@@ -288,16 +272,19 @@ export default function AddToSeriesModal({
 
   // Check if video is already in a series
   const existingSeriesWithVideo = allSeries.find(s =>
-    s.episodes.some(ep => ep.url === videoUrl)
+    s.episodes.some(ep => isSameMedia(ep.url, videoUrl))
   );
 
   const selectedCount = detectedEpisodes.filter(ep => ep.selected).length;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in"
       style={{ backdropFilter: 'blur(14px)' }}
-      onClick={onClose}
+      // close only when the press started on the backdrop, not when a text
+      // selection drag ends outside the dialog
+      onMouseDown={(e) => { backdropPressRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (backdropPressRef.current && e.target === e.currentTarget) onClose(); }}
     >
       <div
         className="bg-[#161210] border border-[rgba(44,36,32,0.4)] rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.7)] w-full max-w-lg animate-scale-in max-h-[90vh] flex flex-col"
@@ -309,7 +296,7 @@ export default function AddToSeriesModal({
             <h2 className="font-heading text-base font-semibold text-[#f0ece8]">Add to Series</h2>
             <p className="text-xs text-[#6b6560] mt-0.5 truncate" title={videoTitle}>
               {currentEpisodeInfo
-                ? `${currentEpisodeInfo.seriesName} - Episode ${currentEpisodeInfo.episode}`
+                ? `${currentEpisodeInfo.seriesName} \u00b7 ${currentEpisodeInfo.season ? `Season ${currentEpisodeInfo.season}, ` : ''}Episode ${currentEpisodeInfo.episode}`
                 : videoTitle}
             </p>
           </div>
@@ -329,8 +316,8 @@ export default function AddToSeriesModal({
 
         {/* Error */}
         {error && (
-          <div className="mx-5 mt-4 p-3 bg-[#B91C1C]/10 border border-[#B91C1C]/30 rounded-xl flex-shrink-0">
-            <p className="text-xs text-[#B91C1C]">{error}</p>
+          <div className="mx-5 mt-4 p-3 bg-sw-accent/10 border border-sw-accent/30 rounded-xl flex-shrink-0">
+            <p className="text-xs text-sw-accent">{error}</p>
           </div>
         )}
 
@@ -344,7 +331,7 @@ export default function AddToSeriesModal({
                 onClick={() => setMode(m)}
                 className={`flex-1 py-2.5 text-xs font-medium text-center font-body transition-colors duration-200 border-b-2 border-transparent cursor-pointer capitalize ${
                   mode === m
-                    ? 'text-[#f0ece8] border-b-[#B91C1C]'
+                    ? 'text-[#f0ece8] border-b-sw-accent'
                     : 'text-[#6b6560] hover:text-[#a39e99]'
                 }`}
               >
@@ -356,7 +343,7 @@ export default function AddToSeriesModal({
                 onClick={() => setMode('auto')}
                 className={`flex-1 py-2.5 text-xs font-medium text-center font-body transition-colors duration-200 border-b-2 border-transparent cursor-pointer relative ${
                   mode === 'auto'
-                    ? 'text-[#f0ece8] border-b-[#B91C1C]'
+                    ? 'text-[#f0ece8] border-b-sw-accent'
                     : 'text-[#6b6560] hover:text-[#a39e99]'
                 }`}
               >
@@ -406,14 +393,14 @@ export default function AddToSeriesModal({
                   <p className="text-sm">No series yet</p>
                   <button
                     onClick={() => setMode('create')}
-                    className="mt-2 text-[#B91C1C] text-xs hover:underline"
+                    className="mt-2 text-sw-accent text-xs hover:underline"
                   >
                     Create your first series
                   </button>
                 </div>
               ) : (
                 allSeries.map((series) => {
-                  const isAlreadyIn = series.episodes.some(ep => ep.url === videoUrl);
+                  const isAlreadyIn = series.episodes.some(ep => isSameMedia(ep.url, videoUrl));
                   return (
                     <button
                       key={series.id}
@@ -426,8 +413,8 @@ export default function AddToSeriesModal({
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-[#B91C1C]/15 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <Layers size={16} className="text-[#B91C1C]" />
+                        <div className="w-9 h-9 bg-sw-accent/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Layers size={16} className="text-sw-accent" />
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-[#f0ece8] truncate">{series.name}</p>
@@ -488,8 +475,8 @@ export default function AddToSeriesModal({
             <div className="space-y-4">
               {/* Current episode info */}
               {currentEpisodeInfo && (
-                <div className="p-3 bg-[#B91C1C]/10 border border-[#B91C1C]/30 rounded-xl">
-                  <p className="text-xs text-[#B91C1C] font-medium mb-0.5">Current Episode</p>
+                <div className="p-3 bg-sw-accent/10 border border-sw-accent/30 rounded-xl">
+                  <p className="text-xs text-sw-accent font-medium mb-0.5">Current Episode</p>
                   <p className="text-sm text-[#f0ece8]">
                     {currentEpisodeInfo.seriesName} - Episode {currentEpisodeInfo.episode}
                     {currentEpisodeInfo.season && ` (Season ${currentEpisodeInfo.season})`}
@@ -501,12 +488,12 @@ export default function AddToSeriesModal({
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-medium text-[#a39e99]">
-                    Detected Next Episodes ({selectedCount}/{detectedEpisodes.length})
+                    Detected Episodes ({selectedCount}/{detectedEpisodes.length})
                   </label>
                   <div className="flex gap-3">
                     <button
                       onClick={selectAllEpisodes}
-                      className="text-xs text-[#B91C1C] hover:underline"
+                      className="text-xs text-sw-accent hover:underline"
                     >
                       Select All
                     </button>
@@ -526,12 +513,12 @@ export default function AddToSeriesModal({
                       onClick={() => toggleEpisode(index)}
                       className={`w-full p-2 rounded-xl text-left transition-colors flex items-center gap-3 ${
                         ep.selected
-                          ? 'bg-[rgba(185,28,28,0.07)] border border-[#B91C1C]/40'
+                          ? 'bg-sw-accent/[0.07] border border-sw-accent/40'
                           : 'bg-[#1e1a17] border border-[#2c2420] hover:bg-[#2a2320]'
                       }`}
                     >
                       <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${
-                        ep.selected ? 'bg-[#B91C1C]' : 'bg-[#2c2420]'
+                        ep.selected ? 'bg-sw-accent' : 'bg-[#2c2420]'
                       }`}>
                         {ep.selected && (
                           <CheckCircle2 size={12} className="text-white" />
@@ -564,7 +551,7 @@ export default function AddToSeriesModal({
                   </label>
                   <div className="space-y-1 max-h-32 overflow-y-auto">
                     {matchingSeries.map((series) => {
-                      const isAlreadyIn = series.episodes.some(ep => ep.url === videoUrl);
+                      const isAlreadyIn = series.episodes.some(ep => isSameMedia(ep.url, videoUrl));
                       const seasons = new Set(series.episodes.map(ep => ep.season ?? 1));
                       const seasonCount = seasons.size;
                       return (
@@ -578,8 +565,8 @@ export default function AddToSeriesModal({
                               : 'cursor-pointer hover:bg-[#2a2320] hover:border-[#3a322e]'
                           }`}
                         >
-                          <div className="w-8 h-8 bg-[#B91C1C]/15 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <Layers size={14} className="text-[#B91C1C]" />
+                          <div className="w-8 h-8 bg-sw-accent/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <Layers size={14} className="text-sw-accent" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-[#f0ece8] truncate">{series.name}</p>

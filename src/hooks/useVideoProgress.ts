@@ -8,6 +8,7 @@ interface UseVideoProgressOptions {
   videoUrl: string;
   title: string;
   saveInterval?: number; // in milliseconds
+  sourcePage?: string;   // page the video link was opened from
 }
 
 interface UseVideoProgressReturn {
@@ -24,6 +25,7 @@ export function useVideoProgress({
   videoUrl,
   title,
   saveInterval = 5000,
+  sourcePage,
 }: UseVideoProgressOptions): UseVideoProgressReturn {
   const { user } = useAuth();
   const [savedProgress, setSavedProgress] = useState<VideoHistory | null>(null);
@@ -31,11 +33,23 @@ export function useVideoProgress({
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [resumeTime, setResumeTime] = useState(0);
 
+  const savedProgressRef = useRef<VideoHistory | null>(null);
+  savedProgressRef.current = savedProgress;
+  // "<uid>|<url>" once the saved position for this video has been looked up
+  const loadedForRef = useRef<string | null>(null);
   const lastSaveRef = useRef<number>(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load saved progress on mount
+  // Load saved progress whenever the video (or the signed-in user) changes
   useEffect(() => {
+    let cancelled = false;
+    // never carry a resume position over from the previous video
+    setShowResumePrompt(false);
+    setResumeTime(0);
+    setSavedProgress(null);
+    loadedForRef.current = null;
+    setIsLoading(true);
+
     async function loadProgress() {
       logger.debug('hook', 'useVideoProgress loadProgress', {
         hasUser: !!user,
@@ -51,6 +65,7 @@ export function useVideoProgress({
       try {
         logger.info('hook', 'LOADING_SAVED_PROGRESS', { userId: user.uid });
         const progress = await getVideoProgress(user.uid, videoUrl);
+        if (cancelled) return;
         setSavedProgress(progress);
 
         // Show resume prompt if there's saved progress > 10 seconds and < 95% complete
@@ -70,17 +85,31 @@ export function useVideoProgress({
       } catch (error) {
         logger.error('hook', 'LOAD_PROGRESS_ERROR', error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          loadedForRef.current = `${user.uid}|${videoUrl}`;
+          setIsLoading(false);
+        }
       }
     }
 
     loadProgress();
+    return () => { cancelled = true; };
   }, [user, videoUrl]);
 
   // Save progress function
   const saveProgress = useCallback(
     async (currentTime: number, duration: number) => {
       if (!user || !videoUrl || duration <= 0) return;
+
+      // Don't write anything until we know what was saved before: the video
+      // usually starts playing first, and an early "0:00" save would
+      // overwrite the position we are about to resume from.
+      if (loadedForRef.current !== `${user.uid}|${videoUrl}`) return;
+
+      // Opening a video you were further into (or had finished) and watching
+      // only a few seconds must not wipe the saved position.
+      const saved = savedProgressRef.current;
+      if (saved && currentTime < 30 && saved.progress > currentTime) return;
 
       const now = Date.now();
 
@@ -104,12 +133,12 @@ export function useVideoProgress({
           duration: Math.round(duration),
           percent: Math.round((currentTime / duration) * 100)
         });
-        await saveVideoProgress(user.uid, videoUrl, currentTime, duration, title);
+        await saveVideoProgress(user.uid, videoUrl, currentTime, duration, title, { sourcePage });
       } catch (error) {
         logger.error('hook', 'SAVE_PROGRESS_ERROR', error);
       }
     },
-    [user, videoUrl, title, saveInterval]
+    [user, videoUrl, title, saveInterval, sourcePage]
   );
 
   // Cleanup timeout on unmount

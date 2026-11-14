@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
-import { getRecentHistory, clearWatchHistory, deleteVideoFromHistory } from '@/lib/firestore';
+import { getRecentHistory, clearWatchHistory, deleteHistoryEntries } from '@/lib/firestore';
+import { mediaKeyFromUrl } from '@/lib/titleParser';
 import { VideoHistory } from '@/types';
 import { logger } from '@/lib/logger';
 
@@ -18,13 +19,6 @@ export function useRecentHistory(maxResults: number = 5): UseRecentHistoryReturn
   const [history, setHistory] = useState<VideoHistory[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  logger.debug('history', 'useRecentHistory render', {
-    isAuthLoading,
-    hasUser: !!user,
-    isHistoryLoading,
-    historyCount: history.length
-  });
 
   const fetchHistory = useCallback(async () => {
     logger.info('history', 'fetchHistory called', { hasUser: !!user, uid: user?.uid });
@@ -85,15 +79,18 @@ export function useRecentHistory(maxResults: number = 5): UseRecentHistoryReturn
 
     try {
       logger.info('history', 'Deleting video from history...', { url: videoUrl.substring(0, 50) });
-      await deleteVideoFromHistory(user.uid, videoUrl);
-      // Remove from local state
-      setHistory(prev => prev.filter(v => v.url !== videoUrl));
+      // The same video can be stored under several (older) links - remove all of them
+      const key = mediaKeyFromUrl(videoUrl);
+      const matches = history.filter(v => v.url === videoUrl || mediaKeyFromUrl(v.url) === key);
+      await deleteHistoryEntries(user.uid, matches.map(v => v.id));
+      const removed = new Set(matches.map(v => v.id));
+      setHistory(prev => prev.filter(v => !removed.has(v.id)));
       logger.info('history', 'Video deleted from history');
     } catch (err) {
       logger.error('history', 'Failed to delete video', err);
       setError('Failed to delete video from history');
     }
-  }, [user]);
+  }, [user, history]);
 
   // Loading is true if auth is loading OR history is being fetched
   const isLoading = isAuthLoading || isHistoryLoading;

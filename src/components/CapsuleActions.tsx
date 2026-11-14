@@ -34,7 +34,7 @@ export default function CapsuleActions({ onSubtitles, onAddToSeries, sidebarOpen
         <button
           onClick={onAddToSeries}
           onMouseUp={blur}
-          className="group relative w-[58px] h-[50px] flex items-center justify-center cursor-pointer transition-all duration-250 text-sw-text/85 bg-[rgba(153,27,27,0.65)] border border-[rgba(185,28,28,0.3)] border-l-0 rounded-r-[14px] outline-none hover:bg-[rgba(185,28,28,0.9)] hover:text-sw-text hover:shadow-[0_0_20px_rgba(185,28,28,0.3)]"
+          className="group relative w-[58px] h-[50px] flex items-center justify-center cursor-pointer transition-all duration-250 text-sw-text/85 bg-[rgba(153,27,27,0.65)] border border-sw-accent/[0.3] border-l-0 rounded-r-[14px] outline-none hover:bg-sw-accent/[0.9] hover:text-sw-text hover:shadow-[0_0_20px_rgba(185,28,28,0.3)]"
           style={{ transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)' }}
         >
           <FolderPlus size={21} />

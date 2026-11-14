@@ -1,6 +1,6 @@
 {
   "name": "streamwatch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Transform video links into a Netflix-like streaming experience",
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "build:webstore": "tsc && vite build && node scripts/build-webstore.js",
     "preview": "vite preview",
+    "demo": "node dev-harness/server.mjs",
     "generate-icons": "node scripts/generate-icons.js",
     "postinstall": "node scripts/generate-icons.js"
   },

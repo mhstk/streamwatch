@@ -11,24 +11,68 @@ import {
   updateDoc,
   arrayUnion,
   deleteDoc as firestoreDeleteDoc,
+  DocumentData,
 } from 'firebase/firestore';
 import { getFirebaseDb } from './firebase';
 import { VideoHistory, Series, Episode } from '@/types';
 import { extractHost, extractTitleFromUrl } from './utils';
+import { mediaKeyFromUrl } from './titleParser';
 import { logger } from './logger';
 
 /**
- * Generate a consistent ID from URL for Firestore document
+ * Short, stable hash of a string for use as a Firestore document ID
  */
-function generateVideoId(url: string): string {
-  // Simple hash for sync operation - base64 encode and clean
+function hashString(value: string): string {
   let hash = 0;
-  for (let i = 0; i < url.length; i++) {
-    const char = url.charCodeAt(i);
+  for (let i = 0; i < value.length; i++) {
+    const char = value.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash;
   }
   return Math.abs(hash).toString(36);
+}
+
+/**
+ * Document ID for a video.
+ *
+ * Based on the media key (series+episode / movie+year / filename), NOT on the
+ * raw URL: many hosts issue a new expiring link for the same file each time,
+ * and progress has to survive that.
+ */
+function mediaDocId(videoUrl: string): string {
+  return hashString(mediaKeyFromUrl(videoUrl));
+}
+
+/** Document ID used by older versions (hash of the full URL) */
+function legacyDocId(videoUrl: string): string {
+  return hashString(videoUrl);
+}
+
+/** How many recent entries to scan when looking for an older entry of the same video */
+const LEGACY_SCAN_LIMIT = 300;
+
+function docToHistory(id: string, data: DocumentData): VideoHistory {
+  return {
+    id,
+    url: data.url,
+    title: data.title,
+    sourceHost: data.sourceHost || '',
+    duration: data.duration || 0,
+    progress: data.progress || 0,
+    progressPercent: data.progressPercent || 0,
+    completed: data.completed || false,
+    lastWatched: data.lastWatched,
+    createdAt: data.createdAt || data.lastWatched,
+    sourcePage: data.sourcePage,
+    // Poster info
+    posterUrl: data.posterUrl,
+    backdropUrl: data.backdropUrl,
+    mediaTitle: data.mediaTitle,
+    mediaYear: data.mediaYear,
+    mediaType: data.mediaType,
+    mediaRating: data.mediaRating,
+    mediaOverview: data.mediaOverview,
+  };
 }
 
 // Poster info to save with video history
@@ -51,28 +95,25 @@ export async function saveVideoProgress(
   progress: number,
   duration: number,
   title: string,
-  posterInfo?: VideoPosterInfo
+  extra?: { sourcePage?: string }
 ): Promise<void> {
-  const videoId = generateVideoId(videoUrl);
+  const videoId = mediaDocId(videoUrl);
   const progressPercent = duration > 0 ? Math.round((progress / duration) * 100) : 0;
   const completed = progressPercent >= 90;
 
-  logger.info('firestore', 'SAVE_PROGRESS', {
-    userId,
+  logger.debug('firestore', 'SAVE_PROGRESS', {
     videoId,
     title,
     progress: Math.round(progress),
-    duration: Math.round(duration),
     progressPercent,
-    completed,
-    url: videoUrl.substring(0, 50) + '...'
   });
 
   try {
     const db = getFirebaseDb();
 
     const videoData: Record<string, unknown> = {
-      url: videoUrl,
+      url: videoUrl, // always the most recent (and so most likely still valid) link
+      mediaKey: mediaKeyFromUrl(videoUrl),
       title,
       sourceHost: extractHost(videoUrl),
       duration,
@@ -82,25 +123,13 @@ export async function saveVideoProgress(
       lastWatched: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
-
-    // Include poster info if provided
-    if (posterInfo) {
-      if (posterInfo.posterUrl) videoData.posterUrl = posterInfo.posterUrl;
-      if (posterInfo.backdropUrl) videoData.backdropUrl = posterInfo.backdropUrl;
-      if (posterInfo.mediaTitle) videoData.mediaTitle = posterInfo.mediaTitle;
-      if (posterInfo.mediaYear) videoData.mediaYear = posterInfo.mediaYear;
-      if (posterInfo.mediaType) videoData.mediaType = posterInfo.mediaType;
-      if (posterInfo.mediaRating !== undefined) videoData.mediaRating = posterInfo.mediaRating;
-      if (posterInfo.mediaOverview) videoData.mediaOverview = posterInfo.mediaOverview;
-    }
+    if (extra?.sourcePage) videoData.sourcePage = extra.sourcePage;
 
     await setDoc(
       doc(db, 'users', userId, 'history', videoId),
       videoData,
       { merge: true }
     );
-
-    logger.info('firestore', 'SAVE_SUCCESS', { videoId, progressPercent });
   } catch (err) {
     logger.error('firestore', 'SAVE_FAILED', { videoId, error: err });
     throw err;
@@ -108,37 +137,21 @@ export async function saveVideoProgress(
 }
 
 /**
- * Update poster info for a video (called after TMDB lookup)
+ * Update poster info for a history entry (called after TMDB lookup).
+ * Takes the history document ID, not the URL.
  */
 export async function updateVideoPoster(
   userId: string,
-  videoUrl: string,
+  historyId: string,
   posterInfo: VideoPosterInfo
 ): Promise<void> {
-  const videoId = generateVideoId(videoUrl);
-
-  logger.info('firestore', 'UPDATE_POSTER', {
-    userId,
-    videoId,
-    hasPostet: !!posterInfo.posterUrl,
-    mediaTitle: posterInfo.mediaTitle,
-  });
+  if (!historyId) return;
 
   try {
     const db = getFirebaseDb();
-    const docRef = doc(db, 'users', userId, 'history', videoId);
+    const docRef = doc(db, 'users', userId, 'history', historyId);
 
-    // Check if document exists first
-    const docSnap = await getDoc(docRef);
-    if (!docSnap.exists()) {
-      logger.debug('firestore', 'UPDATE_POSTER_NO_DOC', { videoId });
-      return;
-    }
-
-    const updateData: Record<string, unknown> = {
-      updatedAt: serverTimestamp(),
-    };
-
+    const updateData: Record<string, unknown> = {};
     if (posterInfo.posterUrl) updateData.posterUrl = posterInfo.posterUrl;
     if (posterInfo.backdropUrl) updateData.backdropUrl = posterInfo.backdropUrl;
     if (posterInfo.mediaTitle) updateData.mediaTitle = posterInfo.mediaTitle;
@@ -146,121 +159,74 @@ export async function updateVideoPoster(
     if (posterInfo.mediaType) updateData.mediaType = posterInfo.mediaType;
     if (posterInfo.mediaRating !== undefined) updateData.mediaRating = posterInfo.mediaRating;
     if (posterInfo.mediaOverview) updateData.mediaOverview = posterInfo.mediaOverview;
+    if (Object.keys(updateData).length === 0) return;
 
+    // updateDoc fails if the entry was deleted in the meantime - which is what we want
     await updateDoc(docRef, updateData);
-
-    logger.info('firestore', 'UPDATE_POSTER_SUCCESS', { videoId });
   } catch (err) {
-    logger.error('firestore', 'UPDATE_POSTER_FAILED', { videoId, error: err });
+    logger.error('firestore', 'UPDATE_POSTER_FAILED', { historyId, error: err });
     throw err;
   }
 }
 
 /**
- * Get video progress for a specific video
+ * Get saved progress for a video.
+ *
+ * Looks the video up by what it is, not by its exact URL, so a fresh link to
+ * the same file resumes where the old one stopped.
  */
 export async function getVideoProgress(
   userId: string,
   videoUrl: string
 ): Promise<VideoHistory | null> {
-  const videoId = generateVideoId(videoUrl);
-
-  logger.info('firestore', 'GET_PROGRESS', {
-    userId,
-    videoId,
-    url: videoUrl.substring(0, 50) + '...'
-  });
-
   try {
     const db = getFirebaseDb();
-    const docRef = doc(db, 'users', userId, 'history', videoId);
-    const docSnap = await getDoc(docRef);
+    const historyRef = collection(db, 'users', userId, 'history');
 
-    if (docSnap.exists()) {
+    // 1. Entry for this media
+    const keySnap = await getDoc(doc(historyRef, mediaDocId(videoUrl)));
+    if (keySnap.exists()) return docToHistory(keySnap.id, keySnap.data());
+
+    // 2. Entry written by an older version for this exact URL
+    const legacySnap = await getDoc(doc(historyRef, legacyDocId(videoUrl)));
+    if (legacySnap.exists()) return docToHistory(legacySnap.id, legacySnap.data());
+
+    // 3. Entry written by an older version for the same file behind another link
+    const key = mediaKeyFromUrl(videoUrl);
+    const recent = await getDocs(query(historyRef, orderBy('lastWatched', 'desc'), limit(LEGACY_SCAN_LIMIT)));
+    for (const docSnap of recent.docs) {
       const data = docSnap.data();
-      const result: VideoHistory = {
-        id: docSnap.id,
-        url: data.url,
-        title: data.title,
-        sourceHost: data.sourceHost || '',
-        duration: data.duration,
-        progress: data.progress,
-        progressPercent: data.progressPercent,
-        completed: data.completed || false,
-        lastWatched: data.lastWatched,
-        createdAt: data.createdAt || data.lastWatched,
-        // Poster info
-        posterUrl: data.posterUrl,
-        backdropUrl: data.backdropUrl,
-        mediaTitle: data.mediaTitle,
-        mediaYear: data.mediaYear,
-        mediaType: data.mediaType,
-        mediaRating: data.mediaRating,
-        mediaOverview: data.mediaOverview,
-      };
-
-      logger.info('firestore', 'GET_PROGRESS_FOUND', {
-        videoId,
-        title: result.title,
-        progress: Math.round(result.progress),
-        progressPercent: result.progressPercent
-      });
-
-      return result;
+      if (typeof data.url === 'string' && mediaKeyFromUrl(data.url) === key) {
+        logger.info('firestore', 'GET_PROGRESS_FOUND_BY_KEY', { key });
+        return docToHistory(docSnap.id, data);
+      }
     }
 
-    logger.debug('firestore', 'GET_PROGRESS_NOT_FOUND', { videoId });
     return null;
   } catch (err) {
-    logger.error('firestore', 'GET_PROGRESS_FAILED', { videoId, error: err });
+    logger.error('firestore', 'GET_PROGRESS_FAILED', { error: err });
     throw err;
   }
 }
 
 /**
- * Get recent watch history
+ * Get recent watch history (raw entries, newest first)
  */
 export async function getRecentHistory(
   userId: string,
   maxResults: number = 10
 ): Promise<VideoHistory[]> {
-  logger.info('firestore', 'getRecentHistory', { userId, maxResults });
-
   try {
     const db = getFirebaseDb();
-    logger.debug('firestore', 'Got db instance');
-
     const historyRef = collection(db, 'users', userId, 'history');
     const q = query(historyRef, orderBy('lastWatched', 'desc'), limit(maxResults));
-
-    logger.debug('firestore', 'Executing query...');
     const querySnapshot = await getDocs(q);
-    logger.debug('firestore', 'Query complete', { docCount: querySnapshot.size });
 
     const history: VideoHistory[] = [];
-
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      history.push({
-        id: docSnap.id,
-        url: data.url,
-        title: data.title,
-        sourceHost: data.sourceHost || '',
-        duration: data.duration,
-        progress: data.progress,
-        progressPercent: data.progressPercent,
-        completed: data.completed || false,
-        lastWatched: data.lastWatched,
-        createdAt: data.createdAt || data.lastWatched,
-        // Poster info
-        posterUrl: data.posterUrl,
-        backdropUrl: data.backdropUrl,
-        mediaTitle: data.mediaTitle,
-        mediaYear: data.mediaYear,
-        mediaType: data.mediaType,
-        mediaRating: data.mediaRating,
-        mediaOverview: data.mediaOverview,
-      });
+      if (typeof data.url !== 'string') return;
+      history.push(docToHistory(docSnap.id, data));
     });
 
     logger.info('firestore', 'getRecentHistory complete', { count: history.length });
@@ -282,16 +248,11 @@ export async function clearWatchHistory(userId: string): Promise<void> {
     const historyRef = collection(db, 'users', userId, 'history');
     const querySnapshot = await getDocs(historyRef);
 
-    logger.debug('firestore', 'CLEAR_HISTORY_DOCS_FOUND', { count: querySnapshot.size });
-
-    const { deleteDoc } = await import('firebase/firestore');
-
-    const deletePromises = querySnapshot.docs.map((docSnapshot) => {
-      logger.debug('firestore', 'DELETING_DOC', { docId: docSnapshot.id });
-      return deleteDoc(doc(db, 'users', userId, 'history', docSnapshot.id));
-    });
-
-    await Promise.all(deletePromises);
+    await Promise.all(
+      querySnapshot.docs.map((docSnapshot) =>
+        firestoreDeleteDoc(doc(db, 'users', userId, 'history', docSnapshot.id))
+      )
+    );
 
     logger.info('firestore', 'CLEAR_HISTORY_SUCCESS', { deletedCount: querySnapshot.size });
   } catch (err) {
@@ -301,20 +262,20 @@ export async function clearWatchHistory(userId: string): Promise<void> {
 }
 
 /**
- * Delete a single video from watch history
+ * Delete history entries by document ID
  */
-export async function deleteVideoFromHistory(userId: string, videoUrl: string): Promise<void> {
-  const videoId = generateVideoId(videoUrl);
-
-  logger.info('firestore', 'DELETE_VIDEO_START', { userId, videoId });
+export async function deleteHistoryEntries(userId: string, historyIds: string[]): Promise<void> {
+  const ids = Array.from(new Set(historyIds.filter(Boolean)));
+  if (ids.length === 0) return;
 
   try {
     const db = getFirebaseDb();
-    await firestoreDeleteDoc(doc(db, 'users', userId, 'history', videoId));
-
-    logger.info('firestore', 'DELETE_VIDEO_SUCCESS', { videoId });
+    await Promise.all(
+      ids.map((id) => firestoreDeleteDoc(doc(db, 'users', userId, 'history', id)))
+    );
+    logger.info('firestore', 'DELETE_HISTORY_SUCCESS', { count: ids.length });
   } catch (err) {
-    logger.error('firestore', 'DELETE_VIDEO_FAILED', { videoId, error: err });
+    logger.error('firestore', 'DELETE_HISTORY_FAILED', { error: err });
     throw err;
   }
 }
@@ -509,7 +470,7 @@ export async function addEpisodeToSeries(
     // If same season+episodeNumber exists, replace it (new URL from different CDN)
     const existingIdx = episodeNumber != null
       ? currentEpisodes.findIndex((ep: any) => ep.episodeNumber === episodeNumber && (ep.season ?? 1) === (season ?? 1))
-      : currentEpisodes.findIndex((ep: any) => ep.url === episodeUrl);
+      : currentEpisodes.findIndex((ep: any) => ep.url === episodeUrl || mediaKeyFromUrl(ep.url) === mediaKeyFromUrl(episodeUrl));
 
     const newEpisode: Episode = {
       url: episodeUrl,
@@ -578,10 +539,10 @@ export async function updateEpisodeInSeries(
   userId: string,
   seriesId: string,
   episodeIndex: number,
-  updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed'>>,
+  updates: Partial<Pick<Episode, 'duration' | 'progress' | 'completed' | 'lastWatched' | 'url'>>,
   episodeUrl?: string
 ): Promise<void> {
-  logger.info('firestore', 'UPDATE_EPISODE', { userId, seriesId, episodeIndex, episodeUrl, updates });
+  logger.debug('firestore', 'UPDATE_EPISODE', { seriesId, episodeIndex, updates: Object.keys(updates) });
 
   try {
     const db = getFirebaseDb();
@@ -610,7 +571,6 @@ export async function updateEpisodeInSeries(
       updatedAt: serverTimestamp(),
     });
 
-    logger.info('firestore', 'UPDATE_EPISODE_SUCCESS', { seriesId, targetIndex, episodeUrl });
   } catch (err) {
     logger.error('firestore', 'UPDATE_EPISODE_FAILED', { seriesId, episodeIndex, episodeUrl, error: err });
     throw err;
@@ -677,7 +637,25 @@ export async function deleteSeries(userId: string, seriesId: string): Promise<vo
 }
 
 /**
- * Find series containing a specific video URL
+ * Delete every series of a user
+ */
+export async function deleteAllSeries(userId: string): Promise<void> {
+  try {
+    const db = getFirebaseDb();
+    const snapshot = await getDocs(collection(db, 'users', userId, 'series'));
+    await Promise.all(
+      snapshot.docs.map((d) => firestoreDeleteDoc(doc(db, 'users', userId, 'series', d.id)))
+    );
+    logger.info('firestore', 'DELETE_ALL_SERIES_SUCCESS', { count: snapshot.size });
+  } catch (err) {
+    logger.error('firestore', 'DELETE_ALL_SERIES_FAILED', { error: err });
+    throw err;
+  }
+}
+
+/**
+ * Find the series containing a video.
+ * Matches the exact URL first, then the same episode behind a different link.
  */
 export async function findSeriesByVideoUrl(userId: string, videoUrl: string): Promise<{ series: Series; episodeIndex: number } | null> {
   logger.info('firestore', 'FIND_SERIES_BY_URL', { userId, url: videoUrl.substring(0, 50) + '...' });
@@ -688,7 +666,15 @@ export async function findSeriesByVideoUrl(userId: string, videoUrl: string): Pr
     for (const series of allSeries) {
       const episodeIndex = series.episodes.findIndex(ep => ep.url === videoUrl);
       if (episodeIndex !== -1) {
-        logger.info('firestore', 'FIND_SERIES_BY_URL_FOUND', { seriesId: series.id, episodeIndex });
+        return { series, episodeIndex };
+      }
+    }
+
+    const key = mediaKeyFromUrl(videoUrl);
+    for (const series of allSeries) {
+      const episodeIndex = series.episodes.findIndex(ep => mediaKeyFromUrl(ep.url) === key);
+      if (episodeIndex !== -1) {
+        logger.info('firestore', 'FIND_SERIES_BY_KEY_FOUND', { seriesId: series.id, episodeIndex });
         return { series, episodeIndex };
       }
     }
@@ -719,7 +705,7 @@ export async function saveSubtitlePreference(
   videoUrl: string,
   preference: Omit<SubtitlePreference, 'savedAt'>
 ): Promise<void> {
-  const videoId = generateVideoId(videoUrl);
+  const videoId = mediaDocId(videoUrl);
 
   logger.info('firestore', 'SAVE_SUBTITLE_PREF', {
     userId,
@@ -751,14 +737,15 @@ export async function getSubtitlePreference(
   userId: string,
   videoUrl: string
 ): Promise<SubtitlePreference | null> {
-  const videoId = generateVideoId(videoUrl);
-
-  logger.info('firestore', 'GET_SUBTITLE_PREF', { userId, videoId });
+  const videoId = mediaDocId(videoUrl);
 
   try {
     const db = getFirebaseDb();
-    const docRef = doc(db, 'users', userId, 'subtitlePrefs', videoId);
-    const docSnap = await getDoc(docRef);
+    let docSnap = await getDoc(doc(db, 'users', userId, 'subtitlePrefs', videoId));
+    if (!docSnap.exists()) {
+      // preference saved by an older version for this exact URL
+      docSnap = await getDoc(doc(db, 'users', userId, 'subtitlePrefs', legacyDocId(videoUrl)));
+    }
 
     if (docSnap.exists()) {
       const data = docSnap.data();
@@ -794,13 +781,14 @@ export async function deleteSubtitlePreference(
   userId: string,
   videoUrl: string
 ): Promise<void> {
-  const videoId = generateVideoId(videoUrl);
+  const videoId = mediaDocId(videoUrl);
 
   logger.info('firestore', 'DELETE_SUBTITLE_PREF', { userId, videoId });
 
   try {
     const db = getFirebaseDb();
     await firestoreDeleteDoc(doc(db, 'users', userId, 'subtitlePrefs', videoId));
+    await firestoreDeleteDoc(doc(db, 'users', userId, 'subtitlePrefs', legacyDocId(videoUrl)));
 
     logger.info('firestore', 'DELETE_SUBTITLE_PREF_SUCCESS', { videoId });
   } catch (err) {

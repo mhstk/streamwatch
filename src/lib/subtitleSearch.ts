@@ -1,6 +1,8 @@
 // Subtitle search service using SubSource.net API
 // API Documentation: https://subsource.net/api-docs
 
+import { parseMediaName } from './titleParser';
+
 const SUBSOURCE_API_URL = 'https://api.subsource.net/api/v1';
 // SubSource API key - hardcoded for distribution
 const SUBSOURCE_API_KEY = 'sk_d56fb0c0c222144040f3da203de0519af66dba8c01b7b6e801ccb8387aa51025';
@@ -279,22 +281,29 @@ export async function searchSubtitles(params: {
   language?: string;
   season?: number;
   episode?: number;
+  year?: number;
 }): Promise<{
   results: SubtitleSearchResult[];
   movie?: MovieSearchResult;
 }> {
-  // First search for the movie/show
-  const movies = await searchMovies({
+  // First search for the movie/show; if the narrow search finds nothing,
+  // retry without year/season before giving up.
+  let movies = await searchMovies({
     query: params.query,
     season: params.season,
+    year: params.season === undefined ? params.year : undefined,
   });
+  if (movies.length === 0 && (params.season !== undefined || params.year !== undefined)) {
+    movies = await searchMovies({ query: params.query });
+  }
 
   if (movies.length === 0) {
     return { results: [] };
   }
 
-  // Use the first result
-  const movie = movies[0];
+  // Prefer an entry for the right season when the API returns several
+  const movie =
+    (params.season !== undefined && movies.find(m => m.season === params.season)) || movies[0];
 
   // Get subtitles for that movie
   const { results } = await getSubtitles({
@@ -303,6 +312,17 @@ export async function searchSubtitles(params: {
     limit: 50,
     sort: 'popular',
   });
+
+  // A season lists subtitles for all its episodes: show the ones for this
+  // episode first (and only those, when there are any).
+  if (params.episode !== undefined) {
+    const ep = params.episode;
+    const episodeRe = new RegExp(`(?:^|[^a-z0-9])(?:s\\d{1,2})?[ ._-]?e(?:p|pisode)?[ ._-]?0*${ep}(?!\\d)`, 'i');
+    const forEpisode = results.filter(r => episodeRe.test(r.release));
+    if (forEpisode.length > 0) {
+      return { results: forEpisode, movie };
+    }
+  }
 
   return { results, movie };
 }
@@ -393,75 +413,26 @@ export async function extractSubtitleFromZip(zipBlob: Blob): Promise<string> {
   }
 }
 
-// Format video title for search query display
-// Keeps season/episode info but removes quality/codec strings
+// Format video title for the search box: "Friends S05E16", "Saltburn 2023"
 export function formatSearchQuery(title: string): string {
-  // Remove file extension
-  let formatted = title.replace(/\.(mp4|mkv|avi|webm|mov|m4v)$/i, '');
-
-  // Replace common separators with spaces
-  formatted = formatted.replace(/[._-]/g, ' ');
-
-  // Remove quality/codec info
-  formatted = formatted
-    .replace(/\s*(720p|1080p|2160p|4k|hdtv|webrip|bluray|brrip|web-dl|webdl|hdrip|dvdrip)/gi, '')
-    .replace(/\s*(x264|x265|h264|h265|hevc|avc|aac|ac3|dts|flac|10bit)/gi, '')
-    .replace(/\s*(yts|rarbg|etrg|ettv|evo|sparks|proper|repack|internal)/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return formatted;
+  const parsed = parseMediaName(title);
+  if (parsed.kind === 'episode') return parsed.displayTitle;
+  if (parsed.kind === 'movie') return `${parsed.title} ${parsed.year}`;
+  return parsed.title;
 }
 
-// Extract potential search terms from video title
+// Extract search terms from whatever is in the search box
 export function extractSearchTerms(title: string): {
   cleanTitle: string;
   season?: number;
   episode?: number;
   year?: number;
 } {
-  // Remove file extension
-  let cleanTitle = title.replace(/\.(mp4|mkv|avi|webm|mov|m4v)$/i, '');
-
-  // Try to extract year
-  let year: number | undefined;
-  const yearMatch = cleanTitle.match(/[\.\s\-_\(]*((?:19|20)\d{2})[\.\s\-_\)]*/);
-  if (yearMatch) {
-    year = parseInt(yearMatch[1], 10);
-  }
-
-  // Try to extract season/episode info
-  // Common patterns: S01E02, 1x02, Season 1 Episode 2
-  const seasonEpisodePatterns = [
-    /[Ss](\d{1,2})[Ee](\d{1,2})/,
-    /(\d{1,2})x(\d{1,2})/,
-    /[Ss]eason\s*(\d{1,2})\s*[Ee]pisode\s*(\d{1,2})/i,
-  ];
-
-  let season: number | undefined;
-  let episode: number | undefined;
-
-  for (const pattern of seasonEpisodePatterns) {
-    const match = cleanTitle.match(pattern);
-    if (match) {
-      season = parseInt(match[1], 10);
-      episode = parseInt(match[2], 10);
-      // Remove the season/episode part from title
-      cleanTitle = cleanTitle.replace(pattern, '').trim();
-      break;
-    }
-  }
-
-  // Clean up common separators and extra info
-  cleanTitle = cleanTitle
-    .replace(/[._-]/g, ' ')
-    .replace(/\s*\([^)]*\)\s*/g, ' ')  // Remove content in parentheses
-    .replace(/\s*\[[^\]]*\]\s*/g, ' ') // Remove content in brackets
-    .replace(/\s*(720p|1080p|2160p|4k|hdtv|webrip|bluray|brrip|web-dl|hdrip)/gi, '')
-    .replace(/\s*(x264|x265|hevc|aac|ac3|dts)/gi, '')
-    .replace(/\s*((?:19|20)\d{2})\s*/g, ' ') // Remove year from title
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return { cleanTitle, season, episode, year };
+  const parsed = parseMediaName(title);
+  return {
+    cleanTitle: parsed.title || title.trim(),
+    season: parsed.season,
+    episode: parsed.episode,
+    year: parsed.year,
+  };
 }

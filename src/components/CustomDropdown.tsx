@@ -48,7 +48,7 @@ export default function CustomDropdown({ options, value, onChange, className = '
               onClick={() => { onChange(opt.value); setIsOpen(false); }}
               className={`font-body text-sm px-4 py-2.5 cursor-pointer transition-colors duration-150 flex items-center justify-between ${
                 opt.value === value
-                  ? 'bg-[rgba(185,28,28,0.07)] text-sw-text'
+                  ? 'bg-sw-accent/[0.07] text-sw-text'
                   : 'text-sw-text-secondary hover:bg-sw-elevated hover:text-sw-text'
               }`}
             >

@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { extractTitleFromUrl, formatTime } from '@/lib/utils';
-import { parseEpisodeInfo } from '@/lib/episodeParser';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { formatTime } from '@/lib/utils';
+import { getVideoTitle, mediaKeyFromUrl, parseMediaUrl } from '@/lib/titleParser';
+import { useSettings } from '@/hooks/useSettings';
 import { useVideoProgress } from '@/hooks/useVideoProgress';
 import { useSeries } from '@/hooks/useSeries';
 import { useAuth } from '@/hooks/useAuth';
@@ -18,26 +19,17 @@ import { saveSubtitlePreference, getSubtitlePreference } from '@/lib/firestore';
 import { downloadSubtitle, extractSubtitleFromZip } from '@/lib/subtitleSearch';
 import { Timestamp } from 'firebase/firestore';
 
-// Extract a clean title from a video URL using the episode parser, with fallback
-function getVideoTitle(url: string): string {
-  // Try episode parser first (series with S01E01 etc.)
-  const parsed = parseEpisodeInfo(url);
-  if (parsed) {
-    return parsed.title; // e.g., "Breaking Bad S01E01"
+const SPEEDS_STORAGE_KEY = 'streamwatch_speeds';
+
+// True for elements the user types into. Sliders/checkboxes don't count, so
+// keyboard shortcuts keep working after the volume slider was used.
+function isTextEntry(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
+  if (el instanceof HTMLInputElement) {
+    return !['range', 'checkbox', 'radio', 'button', 'submit', 'file'].includes(el.type);
   }
-
-  // Try movie title extraction (year-based: "Movie Name 2025 WEB-DL ...")
-  try {
-    const pathname = decodeURIComponent(new URL(url).pathname);
-    const filename = pathname.split('/').pop() || '';
-    const name = filename.replace(/\.[^.]+$/, '').replace(/[\._-]+/g, ' ').replace(/\s+/g, ' ').trim();
-    const yearMatch = name.match(/^(.+?)\s+((?:19|20)\d{2})(?:\s|$)/);
-    if (yearMatch && yearMatch[1].trim().length > 0) {
-      return `${yearMatch[1].trim()} (${yearMatch[2]})`;
-    }
-  } catch { /* fall through */ }
-
-  return extractTitleFromUrl(url);
+  return el.isContentEditable;
 }
 
 // Helper to safely call play() and ignore AbortError (expected when source changes)
@@ -84,9 +76,17 @@ export default function Player() {
   const originalCueTimesRef = useRef<Map<number, { start: number; end: number }> | null>(null);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
   const isPlayingRef = useRef(false);
+  const lastEpisodeSyncRef = useRef(0);
+  const handlePlayNextRef = useRef<() => void>(() => {});
+  const handlePlayPreviousRef = useRef<() => void>(() => {});
+  const resumedForRef = useRef<string | null>(null);
+  const [videoError, setVideoError] = useState(false);
+  const [sourcePage, setSourcePage] = useState<string | undefined>(undefined);
+  const { settings, isLoading: isSettingsLoading } = useSettings();
 
   // Progress tracking hook
   const {
+    savedProgress,
     showResumePrompt,
     resumeTime,
     saveProgress,
@@ -95,7 +95,11 @@ export default function Player() {
     videoUrl: videoUrl || '',
     title,
     saveInterval: 5000,
+    sourcePage,
   });
+
+  // Where to send the user for a fresh link when this one has expired
+  const sourcePageUrl = sourcePage || savedProgress?.sourcePage;
 
   // Series hook
   const {
@@ -143,6 +147,7 @@ export default function Player() {
   // Load series context when video URL changes
   useEffect(() => {
     if (videoUrl) {
+      setVideoError(false);
       loadSeriesForVideo(videoUrl);
     }
   }, [videoUrl, loadSeriesForVideo]);
@@ -197,10 +202,20 @@ export default function Player() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't handle if typing in an input
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      // A dialog is open: Escape closes it, nothing else reaches the player
+      if (showSubtitleModal || showAddModal || showShortcuts) {
+        if (e.key === 'Escape') {
+          setShowSubtitleModal(false);
+          setShowAddModal(false);
+          setShowShortcuts(false);
+        }
         return;
       }
+
+      // Don't handle if typing in a text field
+      if (isTextEntry(e.target)) return;
+      // Leave browser/OS shortcuts (Ctrl+F, Alt+Left, ...) alone
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (e.key === '?') {
         setShowShortcuts(true);
@@ -309,11 +324,23 @@ export default function Player() {
         case '<':
           e.preventDefault();
           video.playbackRate = Math.max(0.25, video.playbackRate - 0.25);
+          flashSubtitleIndicator(`Speed: ${video.playbackRate}x`);
           break;
 
         case '>':
           e.preventDefault();
           video.playbackRate = Math.min(2, video.playbackRate + 0.25);
+          flashSubtitleIndicator(`Speed: ${video.playbackRate}x`);
+          break;
+
+        case 'n':
+          e.preventDefault();
+          if (hasNextEpisode) handlePlayNextRef.current();
+          break;
+
+        case 'p':
+          e.preventDefault();
+          if (hasPreviousEpisode) handlePlayPreviousRef.current();
           break;
 
         case 'c':
@@ -384,11 +411,13 @@ export default function Player() {
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [subtitles, activeSubtitleIndex, applySubtitleOffset, flashSubtitleIndicator]);
+  }, [subtitles, activeSubtitleIndex, applySubtitleOffset, flashSubtitleIndicator, flashOverlay,
+      showSubtitleModal, showAddModal, showShortcuts, hasNextEpisode, hasPreviousEpisode]);
 
   // Navigate to new video
-  const navigateToVideo = useCallback((url: string, episodeTitle?: string) => {
-    logger.info('player', 'NAVIGATE_TO_VIDEO', { url: url.substring(0, 50) + '...', title: episodeTitle });
+  const navigateToVideo = useCallback((url: string) => {
+    const nextTitle = getVideoTitle(url);
+    logger.info('player', 'NAVIGATE_TO_VIDEO', { title: nextTitle });
 
     // Update URL and reload
     const playerUrl = `${window.location.pathname}?url=${encodeURIComponent(url)}`;
@@ -396,9 +425,10 @@ export default function Player() {
 
     // Update state
     setVideoUrl(url);
-    setTitle(episodeTitle || getVideoTitle(url));
-    document.title = `${episodeTitle || getVideoTitle(url)} - StreamWatch`;
+    setTitle(nextTitle);
+    document.title = `${nextTitle} - StreamWatch`;
     setShowNextEpisode(false);
+    setVideoError(false);
     setIsLoading(true);
     setCurrentTime(0);
     setDuration(0);
@@ -420,29 +450,26 @@ export default function Player() {
       if (dur > 0) {
         saveProgress(time, dur);
 
-        // Also update episode progress in series (only if watched > 10s)
-        if (currentSeries && time > 10) {
+        // Also update episode progress in series (only if watched > 10s).
+        // timeupdate fires several times a second - write at most every 5s.
+        const now = Date.now();
+        const storedEpisode = currentSeries?.episodes[currentEpisodeIndex];
+        // a few seconds of a finished / further-watched episode must not reset it
+        const isPeek = time < 30 && !!storedEpisode &&
+          (storedEpisode.completed || (storedEpisode.progress ?? 0) > time);
+        if (currentSeries && time > 10 && !isPeek && now - lastEpisodeSyncRef.current >= 5000) {
+          lastEpisodeSyncRef.current = now;
           const progressPercent = Math.round((time / dur) * 100);
-          logger.debug('player', 'Updating episode lastWatched', {
-            series: currentSeries.name,
-            episodeIndex: currentEpisodeIndex,
-            time: Math.round(time),
-          });
           updateEpisode(currentSeries.id, currentEpisodeIndex, {
             duration: dur,
             progress: time,
             completed: progressPercent >= 90,
             lastWatched: Timestamp.now(),
           }, videoUrl || undefined);
-        } else if (!currentSeries && time > 10) {
-          logger.warn('player', 'Not updating lastWatched - currentSeries is null', {
-            videoUrl: videoUrl?.substring(0, 80),
-            time: Math.round(time),
-          });
         }
       }
     }
-  }, [saveProgress, currentSeries, currentEpisodeIndex, updateEpisode]);
+  }, [saveProgress, currentSeries, currentEpisodeIndex, updateEpisode, videoUrl]);
 
   const handleLoadedMetadata = useCallback(() => {
     if (videoRef.current) {
@@ -453,19 +480,97 @@ export default function Player() {
       });
       setDuration(dur);
       setIsLoading(false);
-
-      // Auto-resume: seek to saved position immediately
-      if (resumeTime > 0 && showResumePrompt) {
-        logger.info('player', 'AUTO_RESUME', { resumeAt: Math.round(resumeTime) });
-        videoRef.current.currentTime = resumeTime;
-      }
-
-      // Update episode duration in series
-      if (currentSeries) {
-        updateEpisode(currentSeries.id, currentEpisodeIndex, { duration: dur }, videoUrl || undefined);
-      }
+      setVideoError(false);
     }
-  }, [currentSeries, currentEpisodeIndex, updateEpisode, resumeTime, showResumePrompt]);
+  }, []);
+
+  // Auto-resume. The saved position comes from the network and can arrive
+  // before OR after the video's metadata, so handle both orders here.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl || isSettingsLoading) return;
+    if (!showResumePrompt || resumeTime <= 0) return;
+    if (resumedForRef.current === videoUrl) return;
+
+    if (!settings.autoResume) {
+      resumedForRef.current = videoUrl;
+      dismissResumePrompt();
+      return;
+    }
+
+    const seek = () => {
+      if (resumedForRef.current === videoUrl) return;
+      resumedForRef.current = videoUrl;
+      if (video.currentTime > 30) {
+        // already well into the video - don't yank the user back
+        dismissResumePrompt();
+        return;
+      }
+      logger.info('player', 'AUTO_RESUME', { resumeAt: Math.round(resumeTime) });
+      video.currentTime = resumeTime;
+    };
+
+    if (video.readyState >= 1) {
+      seek();
+      return;
+    }
+    video.addEventListener('loadedmetadata', seek, { once: true });
+    return () => video.removeEventListener('loadedmetadata', seek);
+  }, [videoUrl, showResumePrompt, resumeTime, settings.autoResume, isSettingsLoading, dismissResumePrompt]);
+
+  // Default / remembered playback speed
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl || isSettingsLoading) return;
+    let cancelled = false;
+    const apply = (rate: number) => {
+      if (cancelled || !videoRef.current) return;
+      const safe = rate >= 0.25 && rate <= 4 ? rate : 1;
+      videoRef.current.defaultPlaybackRate = safe;
+      videoRef.current.playbackRate = safe;
+    };
+    if (settings.rememberPlaybackSpeed) {
+      const key = mediaKeyFromUrl(videoUrl);
+      chrome.storage.local.get(SPEEDS_STORAGE_KEY, (result) => {
+        apply(result?.[SPEEDS_STORAGE_KEY]?.[key] ?? settings.defaultPlaybackSpeed);
+      });
+    } else {
+      apply(settings.defaultPlaybackSpeed);
+    }
+    return () => { cancelled = true; };
+  }, [videoUrl, isSettingsLoading, settings.defaultPlaybackSpeed, settings.rememberPlaybackSpeed]);
+
+  const handleRateChange = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl || !settings.rememberPlaybackSpeed) return;
+    const key = mediaKeyFromUrl(videoUrl);
+    const rate = video.playbackRate;
+    chrome.storage.local.get(SPEEDS_STORAGE_KEY, (result) => {
+      const speeds: Record<string, number> = { ...(result?.[SPEEDS_STORAGE_KEY] || {}) };
+      delete speeds[key];
+      speeds[key] = rate;
+      // keep the map small: drop the oldest entries
+      const keys = Object.keys(speeds);
+      for (const old of keys.slice(0, Math.max(0, keys.length - 200))) delete speeds[old];
+      chrome.storage.local.set({ [SPEEDS_STORAGE_KEY]: speeds });
+    });
+  }, [videoUrl, settings.rememberPlaybackSpeed]);
+
+  // Ask the background page where this link was opened from
+  useEffect(() => {
+    if (!videoUrl) return;
+    setSourcePage(undefined);
+    try {
+      chrome.runtime.sendMessage({ type: 'GET_VIDEO_SOURCE', payload: { videoUrl } }, (res) => {
+        void chrome.runtime.lastError;
+        if (res?.success && typeof res.sourceUrl === 'string' && /^https?:/.test(res.sourceUrl)) {
+          setSourcePage(res.sourceUrl);
+        }
+      });
+    } catch {
+      // background not reachable - not essential
+    }
+  }, [videoUrl]);
 
   const handleVideoEnded = useCallback(() => {
     logger.info('player', 'VIDEO_ENDED', { hasNextEpisode, seriesName: currentSeries?.name });
@@ -480,20 +585,18 @@ export default function Player() {
 
   const handlePlayNext = useCallback(() => {
     const nextUrl = playNextEpisode();
-    if (nextUrl && currentSeries) {
-      const nextEpisode = currentSeries.episodes[currentEpisodeIndex + 1];
-      navigateToVideo(nextUrl, nextEpisode?.title);
-    }
-  }, [playNextEpisode, currentSeries, currentEpisodeIndex, navigateToVideo]);
+    if (nextUrl) navigateToVideo(nextUrl);
+  }, [playNextEpisode, navigateToVideo]);
 
 
   const handlePlayPrevious = useCallback(() => {
     const prevUrl = playPreviousEpisode();
-    if (prevUrl && currentSeries) {
-      const prevEpisode = currentSeries.episodes[currentEpisodeIndex - 1];
-      navigateToVideo(prevUrl, prevEpisode?.title);
-    }
-  }, [playPreviousEpisode, currentSeries, currentEpisodeIndex, navigateToVideo]);
+    if (prevUrl) navigateToVideo(prevUrl);
+  }, [playPreviousEpisode, navigateToVideo]);
+
+  // Latest handlers for the keyboard shortcut effect (declared above them)
+  handlePlayNextRef.current = handlePlayNext;
+  handlePlayPreviousRef.current = handlePlayPrevious;
 
   const handleReplay = useCallback(() => {
     setShowNextEpisode(false);
@@ -505,7 +608,7 @@ export default function Player() {
 
   const handleEpisodeSelect = useCallback((episode: Episode) => {
     setShowSidebar(false);
-    navigateToVideo(episode.url, episode.title);
+    navigateToVideo(episode.url);
   }, [navigateToVideo]);
 
   const handleStartOver = useCallback(() => {
@@ -517,13 +620,13 @@ export default function Player() {
     }
   }, [dismissResumePrompt]);
 
-  // Auto-dismiss resume prompt after 5 seconds
+  // Auto-dismiss the resume notice
   useEffect(() => {
     if (!showResumePrompt) return;
     const timer = setTimeout(() => {
       logger.info('player', 'RESUME_PROMPT_AUTO_DISMISSED');
       dismissResumePrompt();
-    }, 10000);
+    }, 8000);
     return () => clearTimeout(timer);
   }, [showResumePrompt, dismissResumePrompt]);
 
@@ -579,10 +682,8 @@ export default function Player() {
 
       setSubtitles(prev => [...prev, { label: source.label, src: blobUrl }]);
 
-      // Auto-select if it's the first subtitle
-      if (subtitles.length === 0) {
-        setActiveSubtitleIndex(0);
-      }
+      // Show the subtitle that was just added
+      setActiveSubtitleIndex(subtitles.length);
 
       logger.info('player', 'SUBTITLE_ADDED', { label: source.label, type: source.type });
     } catch (err) {
@@ -715,7 +816,22 @@ export default function Player() {
     return () => clearTimeout(timer);
   }, [videoUrl, user]);
 
-  const progressPercent = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
+  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  // "Friends" + "Season 5 \u00b7 Episode 16" / "Saltburn" + "2023"
+  const titleParts = useMemo(() => {
+    if (!videoUrl) return { name: title, detail: '' };
+    const parsed = parseMediaUrl(videoUrl);
+    if (parsed.kind === 'episode' && parsed.episode !== undefined) {
+      const name = currentSeries?.name || parsed.title || title;
+      const detail = parsed.season !== undefined
+        ? `Season ${parsed.season} \u00b7 Episode ${parsed.episode}`
+        : `Episode ${parsed.episode}`;
+      return { name, detail };
+    }
+    if (parsed.kind === 'movie') return { name: parsed.title, detail: String(parsed.year) };
+    return { name: title, detail: '' };
+  }, [videoUrl, title, currentSeries?.name]);
 
   if (!videoUrl) {
     return (
@@ -743,7 +859,12 @@ export default function Player() {
   return (
     <div
       className={`h-screen overflow-hidden bg-black text-white transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}
-      onMouseUp={() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }}
+      onMouseUp={() => {
+        // Drop focus from clicked buttons so Space/arrow keys control the video,
+        // but never from a text field - that made inputs in dialogs unusable.
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && !isTextEntry(active)) active.blur();
+      }}
     >
       <PlayerTopBar sidebarOpen={showSidebar} onToggleSidebar={() => setShowSidebar(!showSidebar)} onShowShortcuts={() => setShowShortcuts(true)} hasSeries={!!user && !!currentSeries} />
       {user && <CapsuleActions sidebarOpen={showSidebar} onSubtitles={() => setShowSubtitleModal(true)} onAddToSeries={() => setShowAddModal(true)} />}
@@ -767,36 +888,72 @@ export default function Player() {
           }}
           onMouseLeave={() => { if (isPlayingRef.current) setShowControls(false); }}
         >
-          {/* Loading Overlay */}
-          {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+          {/* Loading Overlay: opaque for the first load, just a spinner while buffering */}
+          {isLoading && !videoError && (
+            <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none animate-fade-in ${duration > 0 ? '' : 'bg-black/80'}`}>
               <div className="text-center">
                 <div className="w-12 h-12 border-4 border-sw-red/30 border-t-sw-red rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-sw-text-secondary text-sm">Loading video...</p>
+                {duration === 0 && <p className="text-sw-text-secondary text-sm">Loading video...</p>}
               </div>
             </div>
           )}
 
-          {/* Resume Prompt Overlay */}
-          {showResumePrompt && !isLoading && !showNextEpisode && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 pointer-events-none">
-              <div className="relative bg-sw-bg/95 rounded-2xl pt-10 pb-5 px-5 max-w-xs mx-4 border border-sw-border shadow-2xl animate-fade-in pointer-events-auto">
-                <button
-                  onClick={dismissResumePrompt}
-                  className="absolute top-3 right-3 text-sw-accent hover:text-red-400 transition-colors p-1"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                <div className="text-center mb-4">
-                  <p className="text-white text-sm">
-                    Resuming from <span className="text-sw-accent font-medium">{formatTime(resumeTime)}</span>
-                  </p>
+          {/* Playback error (usually an expired link) */}
+          {videoError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/85 z-20 animate-fade-in">
+              <div className="text-center max-w-md px-6">
+                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-sw-accent/15 flex items-center justify-center">
+                  <svg className="w-7 h-7 text-sw-accent" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
                 </div>
+                <h2 className="font-heading text-xl font-semibold text-sw-text mb-2">This video can't be played</h2>
+                <p className="font-body text-sm text-sw-text-secondary mb-5">
+                  The link may have expired or the format isn't supported. Open the video again from the page you got it from
+                  {currentTime > 0 || resumeTime > 0 ? ' \u2014 your progress is saved and it will resume where you left off.' : '.'}
+                </p>
+                <div className="flex items-center justify-center gap-2.5">
+                  {sourcePageUrl && (
+                    <a href={sourcePageUrl} target="_blank" rel="noreferrer" className="btn-primary no-underline">
+                      Open source page
+                    </a>
+                  )}
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      setVideoError(false);
+                      setIsLoading(true);
+                      videoRef.current?.load();
+                      safePlay(videoRef.current);
+                    }}
+                  >
+                    Try again
+                  </button>
+                  <a href={chrome.runtime.getURL('src/home/home.html')} className="btn-ghost no-underline">Home</a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Resume notice: small and out of the way, never dims the video */}
+          {showResumePrompt && !isLoading && !showNextEpisode && !videoError && (
+            <div className="absolute left-5 bottom-24 z-20 animate-slide-up">
+              <div className="flex items-center gap-3 glass bg-[rgba(22,18,16,0.9)] border border-sw-border-soft rounded-[14px] pl-4 pr-2 py-2 shadow-[0_8px_28px_rgba(0,0,0,0.5)]">
+                <p className="font-body text-sm text-sw-text">
+                  Resumed from <span className="text-sw-accent font-medium tabular-nums">{formatTime(resumeTime)}</span>
+                </p>
                 <button
                   onClick={handleStartOver}
-                  className="w-full py-2.5 px-4 bg-sw-surface text-sw-text rounded-lg font-medium text-sm hover:bg-sw-elevated active:scale-95 transition-all duration-200"
+                  className="py-1.5 px-3 bg-sw-surface text-sw-text rounded-lg font-medium text-xs hover:bg-sw-elevated active:scale-95 transition-all duration-200"
                 >
-                  Start Over
+                  Start over
+                </button>
+                <button
+                  onClick={dismissResumePrompt}
+                  className="text-sw-text-muted hover:text-sw-text transition-colors p-1"
+                  title="Dismiss"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
             </div>
@@ -808,7 +965,8 @@ export default function Player() {
               series={currentSeries}
               currentEpisodeIndex={currentEpisodeIndex}
               isVisible={showNextEpisode}
-              autoplayDelay={5}
+              autoplay={settings.autoPlayNext}
+              autoplayDelay={settings.autoPlayDelay}
               onPlayNext={handlePlayNext}
               onCancel={() => setShowNextEpisode(false)}
               onReplay={handleReplay}
@@ -837,9 +995,19 @@ export default function Player() {
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
             onCanPlay={() => setIsLoading(false)}
+            onWaiting={() => setIsLoading(true)}
+            onPlaying={() => setIsLoading(false)}
+            onError={() => { setIsLoading(false); setVideoError(true); }}
+            onRateChange={handleRateChange}
             onEnded={handleVideoEnded}
             onPlay={() => { setIsPlaying(true); isPlayingRef.current = true; }}
-            onPause={() => { setIsPlaying(false); isPlayingRef.current = false; }}
+            onPause={() => {
+              setIsPlaying(false);
+              isPlayingRef.current = false;
+              // save the exact stop position right away
+              lastEpisodeSyncRef.current = 0;
+              handleTimeUpdate();
+            }}
             onVolumeChange={() => {
               const v = videoRef.current;
               if (v) { setVolume(v.volume); setIsMuted(v.muted); }
@@ -860,7 +1028,10 @@ export default function Player() {
           {/* Title Overlay (top gradient, hidden in fullscreen) */}
           {!isFullscreen && (
             <div className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-24 pt-[72px] px-8 pointer-events-none transition-opacity duration-300 z-10 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
-              <h1 className="font-heading text-white text-[56px] font-bold leading-none drop-shadow-lg" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
+              <h1 className="font-heading text-white font-bold leading-[1.1] drop-shadow-lg truncate pb-1" style={{ fontSize: 'clamp(28px, 4vw, 56px)' }}>{titleParts.name}</h1>
+              {titleParts.detail && (
+                <p className="font-body text-white/75 text-lg font-medium mt-1 drop-shadow">{titleParts.detail}</p>
+              )}
             </div>
           )}
 
