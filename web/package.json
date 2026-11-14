@@ -1,0 +1,14 @@
+{
+  "name": "streamwatch-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Web version of the StreamWatch library and player (packages resolve from the repo root node_modules)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "demo": "vite --mode demo",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "server": "node server/server.mjs"
+  }
+}

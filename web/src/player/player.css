@@ -1,0 +1,62 @@
+/* Player page only. Design classes come from the extension's globals.css / web.css. */
+
+/* touch: no double-tap zoom, no text selection / callout on the video */
+.player-gesture {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.player-box video {
+  -webkit-touch-callout: none;
+}
+
+/* the seek bar handles horizontal drags itself */
+.player-seekbar {
+  touch-action: none;
+}
+
+/* the player container when fullscreened from the portrait page */
+.player-box:fullscreen,
+.player-box:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+/* landscape controls stay clear of the notch / home indicator */
+.player-ctl-x {
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+.player-ctl-top {
+  padding-top: max(6px, env(safe-area-inset-top, 0px));
+}
+.player-ctl-bottom {
+  padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+}
+.player-resume-landscape {
+  left: max(16px, env(safe-area-inset-left, 0px));
+  bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+}
+
+/* error screen buttons on a ~220px tall video: smaller, side by side */
+.player-compact-buttons > .btn-primary,
+.player-compact-buttons > .btn-secondary,
+.player-compact-buttons > .btn-ghost {
+  padding: 8px 14px;
+  min-height: 40px;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* bottom sheets that hold long, scrolling content */
+.sheet.player-sheet-tall {
+  height: calc(100dvh - env(safe-area-inset-top, 0px) - 24px);
+}
+
+/* scrolling to the inline episode list stops below the sticky video */
+.player-episodes-anchor {
+  scroll-margin-top: calc(56.25vw + env(safe-area-inset-top, 0px) + 8px);
+}
