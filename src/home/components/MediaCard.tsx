@@ -97,13 +97,13 @@ export default function MediaCard({
   onDetails,
   detailsLabel = 'Details',
 }: MediaCardProps) {
-  const [imageReady, setImageReady] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
-
-  useEffect(() => {
-    setImageReady(false);
-    setImageFailed(false);
-  }, [image]);
+  // Which image URL has loaded / failed. Tracked per URL instead of resetting flags in an effect:
+  // an effect runs after the first paint, so a picture that loads instantly from the browser's
+  // cache could be marked "not ready" again and stay invisible.
+  const [readySrc, setReadySrc] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const imageReady = !!image && readySrc === image;
+  const imageFailed = !!image && failedSrc === image;
 
   const showImage = image && !imageFailed;
 
@@ -127,8 +127,10 @@ export default function MediaCard({
             src={image}
             alt=""
             loading="lazy"
-            onLoad={() => setImageReady(true)}
-            onError={() => setImageFailed(true)}
+            // already complete when React attaches (cached): no load event will follow
+            ref={(el) => { if (el && el.complete && el.naturalWidth > 0 && readySrc !== image) setReadySrc(image); }}
+            onLoad={() => setReadySrc(image)}
+            onError={() => setFailedSrc(image)}
             className={`media-card-img ${imageReady ? 'opacity-100' : 'opacity-0'}`}
           />
         )}
