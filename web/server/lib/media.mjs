@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { FFMPEG, children } from './ffmpeg.mjs';
+import { FFMPEG, children, stopChild } from './ffmpeg.mjs';
 import { BoxSplitter, parseInit, canonicalInit, initSignature, parseFragment, buildFragment, SAMPLE_NON_SYNC } from './mp4.mjs';
 import { readMkvIndex } from './mkv.mjs';
 import { upstreamStats, Source, checkVideoUrl } from './source.mjs';
@@ -19,9 +19,13 @@ import { ApiError, log, fileNameOf } from './util.mjs';
 
 const INDEX_VERSION = 4;
 const SEGMENT_TARGET = 6; // seconds
-const AHEAD_LIMIT = 10; // segments produced ahead of the last request before pausing ffmpeg
+// Read-ahead (see Runner.flow): defaults for cfg.readAheadSeconds / cfg.readAheadSpeed
+export const READ_AHEAD_SECONDS = 60; // video produced beyond the last requested segment before pausing ffmpeg
+export const READ_AHEAD_SPEED = 3; // after the fast start, produce at most this many times real time
+const FAST_START_SECONDS = 30; // video produced as fast as possible after a runner starts
+const PACE_CREDIT_SECONDS = 2; // unused pacing allowance kept while paused for another reason
 const JOIN_WINDOW = 3; // a request this many segments ahead of a runner waits for it
-const IDLE_KILL_MS = 60000;
+const IDLE_KILL_MS = 25000;
 const MAX_ACTIVE = 2;
 const SEGMENT_WAIT_MS = 45000;
 const COPY_AUDIO = ['aac', 'ac3', 'eac3', 'mp3'];
@@ -120,7 +124,12 @@ class Runner {
     this.offsets = new Map();
     this.pendingMoof = null;
     this.splitter = new BoxSplitter();
+    this.id = ++mgr.runnerSeq;
     this.paused = false;
+    this.vTime = -Infinity; // source time (s) of the latest video sample received
+    this.pace = null; // {wall, video}: pacing reference, set when the fast start is over
+    this.paceTimer = null;
+    this.sources = new Set(); // this run's /src responses (ffmpeg's reads), torn down when it stops
     this.produced = 0;
     this.t0 = Date.now();
     this.stderr = '';
@@ -167,7 +176,7 @@ class Runner {
       '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '2',
       '-rw_timeout', '30000000',
       ...(ss > 0 ? ['-ss', ss.toFixed(6)] : []),
-      '-i', `http://127.0.0.1:${mgr.port}/src/${media.id}`,
+      '-i', `http://127.0.0.1:${mgr.port}/src/${media.id}?r=${this.id}`,
       '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
       '-c:v', 'copy', ...(v.codec === 'hevc' ? ['-tag:v', 'hvc1'] : []),
       ...audioArgs,
@@ -214,13 +223,14 @@ class Runner {
       }
     });
     proc.on('error', (e) => { log(`runner ${media.name}: cannot start ffmpeg: ${e.message}`); this.end(false); });
+    proc.on('exit', () => children.delete(proc));
     proc.on('close', (code) => {
       children.delete(proc);
       const clean = code === 0 && this.alive;
       if (!clean && this.alive) log(`runner ${media.name}: ffmpeg stopped (${code}): ${this.stderr.trim().split('\n').pop() || 'no message'}`);
       this.end(clean);
     });
-    log(`runner ${media.name}: start at segment ${this.startSeg} (${K.toFixed(2)}s${this.early ? ', early seek' : ''})`);
+    log(`runner ${media.name}: start at segment ${this.startSeg} (${K.toFixed(2)}s${this.early ? ', early seek' : ''}, pid ${proc.pid})`);
   }
 
   onBox(b) {
@@ -345,6 +355,8 @@ class Runner {
         if (n > this.vSeg) this.vSeg = n;
       }
       if (this.vSeg < this.startSeg) continue; // before the requested segment (or no keyframe yet)
+      const t = pts / vt.timescale - P;
+      if (t > this.vTime) this.vTime = t;
       seg(this.vSeg).video.push({ pts, dur: s.dur, size: s.size, flags: s.flags, data: s.data });
     }
     if (this.aId) {
@@ -401,23 +413,72 @@ class Runner {
     w.finally(() => this.writes.delete(w));
   }
 
+  /**
+   * Read-ahead control, by pausing the read of ffmpeg's stdout (backpressure reaches ffmpeg, then the
+   * source proxy, then the video host). Called after every fragment, on every request and by a timer.
+   *  - while a request waits for output: full speed (and the time produced for it is not counted);
+   *  - the first FAST_START_SECONDS after the run's start: full speed;
+   *  - then at most readAheadSpeed x real time;
+   *  - never more than readAheadSeconds of video beyond the last requested segment.
+   */
   flow() {
+    clearTimeout(this.paceTimer);
+    this.paceTimer = null;
     if (!this.alive || !this.proc) return;
-    const ahead = this.vSeg - this.media.lastRequested;
-    if (!this.paused && ahead > AHEAD_LIMIT) { this.paused = true; this.proc.stdout.pause(); }
-    else if (this.paused && ahead <= AHEAD_LIMIT) { this.paused = false; this.proc.stdout.resume(); }
+    const { media, mgr } = this;
+    const { starts } = media.plan;
+    const now = Date.now();
+    const speed = mgr.readAheadSpeed;
+    let hold = false;
+    let waitMs = 0;
+    const started = this.vTime > -Infinity;
+    if (started && speed > 0) {
+      if (!this.pace) {
+        if (this.vTime - starts[this.startSeg] >= FAST_START_SECONDS) this.pace = { wall: now, video: this.vTime };
+      } else {
+        // allowance accumulated while paused for another reason is capped, so there is no burst after
+        const allowed = this.pace.video + (speed * (now - this.pace.wall)) / 1000;
+        if (allowed > this.vTime + PACE_CREDIT_SECONDS) this.pace = { wall: now, video: this.vTime + PACE_CREDIT_SECONDS };
+        else if (this.vTime > allowed) { hold = true; waitMs = ((this.vTime - allowed) / speed) * 1000; }
+      }
+    }
+    if (media.waiters.size) {
+      hold = false;
+      waitMs = 0;
+      if (this.pace && this.pace.video < this.vTime) this.pace = { wall: now, video: this.vTime };
+    } else if (started) {
+      const n = Math.min(media.lastRequested, starts.length - 1);
+      const requestedEnd = n + 1 < starts.length ? starts[n + 1] : media.index.duration;
+      if (this.vTime - requestedEnd > mgr.readAheadSeconds) { hold = true; waitMs = 0; } // resumed by a request
+    }
+    if (hold && !this.paused) { this.paused = true; this.proc.stdout.pause(); }
+    else if (!hold && this.paused) { this.paused = false; this.proc.stdout.resume(); }
+    if (hold && waitMs > 0) {
+      this.paceTimer = setTimeout(() => this.flow(), Math.min(5000, Math.max(50, Math.ceil(waitMs))));
+      this.paceTimer.unref();
+    }
   }
 
   kill(reason) {
     if (!this.alive) return;
     this.killedFor = reason;
     this.alive = false;
-    try { this.proc.kill(); } catch { /* gone */ }
+    stopChild(this.proc, `runner ${this.media.name}`);
     this.end(false);
+  }
+
+  /** Tears down ffmpeg's reads through the source proxy, which closes their connections to the video host. */
+  closeSources() {
+    for (const res of this.sources) { try { res.destroy(); } catch { /* closed */ } }
+    this.sources.clear();
   }
 
   end(clean) {
     const { media } = this;
+    clearTimeout(this.paceTimer);
+    this.paceTimer = null;
+    this.closeSources();
+    this.mgr.runners.delete(this.id);
     if (clean) {
       // end of file: the trailing segments are complete (only trust it when it is the last segment)
       const last = media.plan.starts.length - 1;
@@ -443,6 +504,11 @@ export class MediaManager {
     this.cache = cache;
     this.port = cfg.port;
     this.medias = new Map();
+    this.runnerSeq = 0;
+    this.runners = new Map(); // runner id -> runner, while it is alive
+    const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) >= 0 && v !== '' && v !== null ? Number(v) : d);
+    this.readAheadSeconds = num(cfg.readAheadSeconds, READ_AHEAD_SECONDS);
+    this.readAheadSpeed = num(cfg.readAheadSpeed, READ_AHEAD_SPEED); // 0: no pacing
     cache.protect = () => {
       const m = new Map();
       for (const media of this.medias.values()) {
@@ -567,20 +633,24 @@ export class MediaManager {
     }
     const r = new Runner(this, media, n, early);
     media.runner = r;
+    this.runners.set(r.id, r);
     r.start();
     return r;
   }
 
   async getInit(media, isGone) {
     media.lastRequestAt = Date.now();
+    this.cache.touch(media.id);
     const deadline = Date.now() + SEGMENT_WAIT_MS;
     for (let attempt = 0; attempt < 4; attempt++) {
       if (this.cache.has(media.id, 'init.mp4')) return this.cache.path(media.id, 'init.mp4');
       if (!media.source) throw new ApiError('source_gone', 'open the video again', 410);
       if (isGone()) throw new ApiError('internal', 'client went away', 499);
       if (!media.runner || !media.runner.alive) this.startRunner(media, media.startHint);
+      const waiting = media.waitFor('init', Math.max(1000, deadline - Date.now()));
+      media.runner?.flow();
       try {
-        await media.waitFor('init', Math.max(1000, deadline - Date.now()));
+        await waiting;
       } catch (e) {
         if (e.timeout) throw new ApiError('internal', 'timed out preparing the video', 504);
       }
@@ -600,9 +670,10 @@ export class MediaManager {
       if (isGone()) throw new ApiError('internal', 'client went away', 499);
       const r = media.runner;
       if (!(r && r.alive && r.position <= n && n <= r.position + JOIN_WINDOW)) this.startRunner(media, n);
-      else r.flow();
+      const waiting = media.waitFor(n, Math.max(1000, deadline - Date.now()));
+      media.runner?.flow(); // a waiting request lifts the pacing
       try {
-        await media.waitFor(n, Math.max(1000, deadline - Date.now()));
+        await waiting;
       } catch (e) {
         if (e.timeout) throw new ApiError('internal', 'timed out producing the segment', 504);
       }
@@ -610,13 +681,22 @@ export class MediaManager {
     throw new ApiError('internal', 'could not produce the segment', 502);
   }
 
-  async serveSource(id, req, res) {
+  /** GET /src/<id>?r=<runner>: ffmpeg's reads; a runner's reads are closed when it stops. */
+  async serveSource(id, req, res, runnerId) {
     const media = this.medias.get(id);
     if (!media || !media.source) { res.writeHead(404); res.end(); return; }
+    if (runnerId) {
+      const r = this.runners.get(Number(runnerId));
+      if (!r || !r.alive || r.media !== media) { res.writeHead(410); res.end(); return; } // a stopped run
+      r.sources.add(res);
+      res.on('close', () => r.sources.delete(res));
+    }
     await media.source.serve(req, res, media.name);
   }
 
   shutdown() {
+    clearInterval(this.idleTimer);
     for (const m of this.medias.values()) m.runner?.kill('shutdown');
+    for (const r of [...this.runners.values()]) r.kill('shutdown');
   }
 }

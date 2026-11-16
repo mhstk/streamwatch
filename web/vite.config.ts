@@ -25,6 +25,9 @@ function moduleSwaps(demo: boolean): Plugin {
   const swap = (from: string, to: string) => swaps.set(fileKey(from), norm(to));
   swap(path.join(repo, 'src/hooks/useAuth'), path.join(web, 'src/platform/useAuth.ts'));
   swap(path.join(repo, 'src/lib/auth'), path.join(web, 'src/platform/auth.ts'));
+  // own Firebase init so authDomain can be this host (README "Sign-in"); catches `@/lib/firebase` and
+  // the `./firebase` imports inside ../src/lib/*.ts
+  swap(path.join(repo, 'src/lib/firebase'), path.join(web, 'src/platform/firebase.ts'));
   if (demo) {
     const authMock = path.join(repo, 'dev-harness/useAuth.mock.ts');
     swap(path.join(repo, 'src/hooks/useAuth'), authMock);
@@ -102,6 +105,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': { target: streamTarget, changeOrigin: true },
         '/hls': { target: streamTarget, changeOrigin: true },
+        // Firebase sign-in helper, only used with ?authmode=redirect in dev (see README "Sign-in")
+        '/__/auth/': { target: 'https://streamwatch-2dfd2.firebaseapp.com', changeOrigin: true },
       },
     },
     build: {

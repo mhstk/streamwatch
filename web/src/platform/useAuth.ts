@@ -1,7 +1,7 @@
 // Web replacement for ../src/hooks/useAuth.ts (swapped in for `@/hooks/useAuth` and the hooks' `./useAuth`).
 // In demo mode this module is itself replaced by ../dev-harness/useAuth.mock.ts.
 import { useState, useEffect, useCallback } from 'react';
-import { type AuthUser, signInWithGoogle, signOut, initAuth, onAuthStateChange } from './auth';
+import { type AuthUser, signInWithGoogle, signOut, initAuth, onAuthStateChange, getRedirectError } from './auth';
 
 interface UseAuthReturn {
   user: AuthUser | null;
@@ -22,6 +22,9 @@ export function useAuth(): UseAuthReturn {
       .then((u) => {
         if (!active) return;
         setUser(u);
+        // a redirect sign-in that failed on its way back (same-origin sign-in mode only)
+        const redirectError = getRedirectError();
+        if (redirectError) setError(redirectError);
         setIsLoading(false);
       })
       .catch(() => active && setIsLoading(false));

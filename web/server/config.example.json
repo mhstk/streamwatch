@@ -3,5 +3,8 @@
   "allowedUids": ["<firebase uid allowed to use this server>"],
   "allowedOrigins": ["https://your-web-app.example"],
   "cacheMaxBytes": 3221225472,
+  "cacheMaxAgeDays": 7,
+  "readAheadSeconds": 60,
+  "readAheadSpeed": 3,
   "secret": "<random; generated on first run when empty>"
 }

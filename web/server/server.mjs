@@ -1,5 +1,6 @@
 // StreamWatch streaming server: repackages remote .mkv files into full-length VOD HLS (fMP4, stream
-// copy) on demand, proxies the SubSource API, and serves the built web app. See ../README.md.
+// copy) on demand, proxies the SubSource API and Firebase's sign-in helper (/__/auth/*), and serves the
+// built web app. See ../README.md.
 //
 //   node web/server/server.mjs        (config: web/server/config.local.json, env PORT overrides)
 import http from 'node:http';
@@ -12,10 +13,12 @@ import { MediaManager } from './lib/media.mjs';
 import { verifyIdToken, makeGrant, checkGrant } from './lib/auth.mjs';
 import { killAll, FFMPEG } from './lib/ffmpeg.mjs';
 import { ApiError, log, sendJson, sendError, readBody, isLoopback } from './lib/util.mjs';
+import { isAuthHelperPath, proxyAuthHelper } from './lib/authproxy.mjs';
 
 const cfg = loadConfig();
-const cache = new DiskCache(cfg.cacheDir, cfg.cacheMaxBytes);
+const cache = new DiskCache(cfg.cacheDir, cfg.cacheMaxBytes, Number(cfg.cacheMaxAgeDays) || 0);
 const media = new MediaManager({ cfg, cache });
+cache.startAgeCleanup();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -190,6 +193,12 @@ async function route(req, res) {
   const isApi = p.startsWith('/api/');
   const isHls = p.startsWith('/hls/');
 
+  // Firebase sign-in helper on this origin (README "Sign-in"); no auth, passed through as-is
+  if (isAuthHelperPath(p)) {
+    proxyAuthHelper(req, res, p, url.search, log);
+    return;
+  }
+
   if (req.method === 'OPTIONS' && (isApi || isHls)) {
     const cors = corsHeaders(req);
     res.writeHead(cors['Access-Control-Allow-Origin'] ? 204 : 403, {
@@ -203,7 +212,7 @@ async function route(req, res) {
 
   if (p.startsWith('/src/')) {
     if (!isLoopback(req.socket.remoteAddress)) { res.writeHead(403); res.end(); return; }
-    await media.serveSource(p.slice(5), req, res);
+    await media.serveSource(p.slice(5), req, res, url.searchParams.get('r'));
     return;
   }
 
@@ -232,6 +241,13 @@ async function route(req, res) {
     if (p === '/api/dev/evict' && cfg.devNoAuth && isLoopback(req.socket.remoteAddress) && req.method === 'POST') {
       const b = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       if (/^[a-f0-9]{16}$/.test(b.id) && /^(seg_\d+\.m4s|init\.mp4)$/.test(b.name)) cache.remove(b.id, b.name);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    // test hook (dev mode, loopback only): the normal shutdown path (Windows has no SIGTERM for tests)
+    if (p === '/api/dev/shutdown' && cfg.devNoAuth && isLoopback(req.socket.remoteAddress) && req.method === 'POST') {
+      log('dev: shutdown requested');
+      res.on('finish', () => shutdown(0));
       sendJson(res, 200, { ok: true });
       return;
     }

@@ -16,6 +16,9 @@ const DEFAULTS = {
   allowedOrigins: [],
   cacheMaxBytes: 3 * 1024 ** 3,
   cacheDir: '',
+  cacheMaxAgeDays: 7, // media unused for longer are deleted; 0 disables
+  readAheadSeconds: 60, // video produced beyond the last requested segment
+  readAheadSpeed: 3, // read-ahead pace after a fast start, x real time; 0 = as fast as the host allows
   secret: '',
 };
 

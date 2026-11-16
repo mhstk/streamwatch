@@ -1,9 +1,10 @@
-// End-to-end checks against the real test files (../../../phone-test/episodes.json, private links:
+// End-to-end checks against real files (--episodes=<json [{id,url}]>, kept outside the repo; private links:
 // never printed). Starts its own servers: dev mode on 8766 (and 8767 without dev mode for the auth
 // checks) with a temporary cache directory that is removed at the end.
 //
-//   node web/server/test/check.mjs [--only=a,b,c,d,e,f] [--episodes=<json [{id,url}]>]
-// (local http://127.0.0.1 test files need STREAMWATCH_DEV_LOCAL_SOURCES=1 in the environment)
+//   node web/server/test/check.mjs [--only=a,b,c,d,e,f] [--episodes=<json [{id,url}]>] [--local-dir=<dir>]
+// --local-dir serves the .mkv files of <dir> from a local Range server (ephemeral port) instead of real
+// links and turns on STREAMWATCH_DEV_LOCAL_SOURCES=1 for the servers it starts.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,10 +12,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { FFMPEG, FFPROBE } from '../lib/ffmpeg.mjs';
+import { startLocalSource } from './localsource.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.resolve(HERE, '..', 'server.mjs');
-const EPISODES = (process.argv.find((a) => a.startsWith('--episodes=')) || '').slice(11) || path.resolve(HERE, '..', '..', '..', 'phone-test', 'episodes.json');
+const EPISODES = (process.argv.find((a) => a.startsWith('--episodes=')) || '').slice(11) || '';
+const LOCAL_DIR = (process.argv.find((a) => a.startsWith('--local-dir=')) || '').slice(12);
 const CONFIG = path.resolve(HERE, '..', 'config.local.json');
 const PORT = 8766;
 const PORT_NOAUTH = 8767;
@@ -26,6 +29,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'streamwatch-check-'));
 const cacheDir = path.join(tmp, 'cache');
 const results = [];
 const procs = [];
+let local = null;
 
 function report(check, ok, detail) {
   results.push({ check, ok });
@@ -35,6 +39,7 @@ function report(check, ok, detail) {
 function startServer(port, dev) {
   const env = { ...process.env, PORT: String(port), STREAMWATCH_CACHE_DIR: cacheDir };
   if (dev) env.STREAMWATCH_DEV_NO_AUTH = '1'; else delete env.STREAMWATCH_DEV_NO_AUTH;
+  if (LOCAL_DIR) env.STREAMWATCH_DEV_LOCAL_SOURCES = '1';
   const p = spawn(process.execPath, [SERVER], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   procs.push(p);
   const logFile = path.join(tmp, `server-${port}.log`);
@@ -103,7 +108,17 @@ async function probeDuration(id) {
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
 
 async function main() {
-  const episodes = JSON.parse(fs.readFileSync(EPISODES, 'utf8'));
+  let episodes;
+  if (LOCAL_DIR) {
+    local = await startLocalSource(LOCAL_DIR);
+    episodes = local.episodes;
+  } else {
+    if (!EPISODES) {
+      console.error('Give the files to test: --episodes=<json [{id,url}]> (real links, kept outside the repo) or --local-dir=<dir with .mkv files>');
+      process.exit(2);
+    }
+    episodes = JSON.parse(fs.readFileSync(EPISODES, 'utf8'));
+  }
   await startServer(PORT, true);
   const media = new Map(); // episode id -> {ep, m, pl}
   for (const ep of episodes) {
@@ -275,7 +290,11 @@ try {
   console.log(`FAIL setup: ${e.message}`);
   exitCode = 1;
 } finally {
+  // stop the dev server through its shutdown path first (stops its ffmpeg children), then kill
+  await fetch(`${B}/api/dev/shutdown`, { method: 'POST' }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 300));
   for (const p of procs) { try { p.kill(); } catch { /* gone */ } }
+  if (local) await local.close();
   await new Promise((r) => setTimeout(r, 500));
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\n${results.length - failed}/${results.length} checks passed`);

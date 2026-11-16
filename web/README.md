@@ -20,8 +20,9 @@ both ways.
 - No new npm dependencies. Packages resolve from the repo root `node_modules` (react, firebase, vite,
   tailwind, lucide-react are already there). The server uses only Node built-ins plus the ffmpeg binary.
 - Do not commit, push, or touch git config.
-- Private data: `../phone-test/episodes.json` holds real, private video links for testing. Never copy
-  those links into source files, logs you leave behind, or commit-able files.
+- Private data: real video links are private (they embed the viewer's IP address). Never put them in
+  source files, logs you leave behind, or anything that gets committed. Tests that need real files take
+  them from a file outside the repo (`--episodes=`).
 
 ## Sharing code with the extension
 
@@ -41,8 +42,9 @@ Extension modules that depend on browser-extension APIs are swapped at build tim
 
 | Extension module | Replaced by | Why |
 |---|---|---|
-| `@/hooks/useAuth` (also imported as `./useAuth`) | `~/platform/useAuth` | Extension signs in with `chrome.identity`; the web uses a Firebase popup. Same Google account gives the same uid. |
+| `@/hooks/useAuth` (also imported as `./useAuth`) | `~/platform/useAuth` | Extension signs in with `chrome.identity`; the web uses a Firebase popup or redirect (see [Sign-in](#sign-in)). Same Google account gives the same uid. |
 | `@/lib/auth` | `~/platform/auth` | Same reason. |
+| `@/lib/firebase` (also `./firebase` from `../src/lib`) | `~/platform/firebase` | Same project config, but `authDomain` can be the page's own host. |
 
 Remaining `chrome.*` calls inside shared modules (`chrome.storage` in `useSettings`, `chrome.runtime.getURL`
 in `utils`) are served by a small shim, `~/platform/chrome-shim`, loaded before anything else. It backs
@@ -71,6 +73,8 @@ A tiny History-API router in `~/router` (no library). Use `navigate(path)` and `
 | `chrome-shim.ts` | side-effect import; defines `window.chrome` subset |
 | `auth.ts` | `signInWithGoogle()`, `signOut()`, `onAuthStateChange(cb)`, `getIdToken()`, `AuthUser` (same shape as the extension's) |
 | `useAuth.ts` | `useAuth(): { user, isLoading, error, signIn, logOut }` (same shape as the extension's hook) |
+| `firebase.ts` | `initializeFirebase()`, `getFirebaseApp()`, `getFirebaseAuth()`, `getFirebaseDb()` (same as the extension's) |
+| `authMode.ts` | `AUTH_MODE` (`'redirect'` or `'popup'`), `isSameOriginSignIn()` |
 | `stream.ts` | `openMedia(videoUrl)`, `withStart(playlistUrl, seconds)`, `StreamError`, `STREAM_BASE` |
 | `env.ts` | `isTouch`, `isIOS`, `canPlayHlsNatively()`, `needsStreamServer(videoUrl)` |
 | `fetch-proxy.ts` | side-effect import; routes `https://api.subsource.net/…` requests through the streaming server (that API does not allow cross-site calls) |
@@ -90,6 +94,26 @@ A tiny History-API router in `~/router` (no library). Use `navigate(path)` and `
 4. On phones, `play()` with sound can be refused until a tap: show a "Tap to play" overlay instead of
    failing.
 
+## Sign-in
+
+Google sign-in has two modes, chosen once per page load (`~/platform/authMode`):
+
+| Mode | When | authDomain | Method |
+|---|---|---|---|
+| Same-origin (redirect) | page served over **https** from a host other than localhost/127.0.0.1 | the page's own host | `signInWithRedirect`, finished by `getRedirectResult` at startup |
+| Popup | everything else (localhost, plain http on a LAN address) | `streamwatch-2dfd2.firebaseapp.com` | `signInWithPopup`, as before |
+
+`?authmode=redirect` or `?authmode=popup` in the address forces a mode for that page load (testing).
+Redirect mode needs `/__/auth/*` on the same origin, which the streaming server (and `npm run dev`)
+forwards to `https://streamwatch-2dfd2.firebaseapp.com/__/auth/*` (Firebase's "proxy auth requests"
+option; iOS browsers block the cross-site helper otherwise). Demo mode never touches Firebase auth.
+
+An https deployment at `https://<host>` needs two console settings once:
+
+1. Firebase console > Authentication > Settings > **Authorized domains**: add `<host>`.
+2. Google Cloud console > APIs & Services > Credentials > the project's OAuth web client >
+   **Authorized redirect URIs**: add `https://<host>/__/auth/handler`.
+
 ## Streaming server API (`web/server`)
 
 Default port **8765**. All `/api/*` calls need `Authorization: Bearer <Firebase ID token>`; only uids in
@@ -106,10 +130,12 @@ GET  /hls/<id>/<grant>/index.m3u8[?start=<seconds>]   full-length VOD playlist
 GET  /hls/<id>/<grant>/init.mp4
 GET  /hls/<id>/<grant>/seg_<n>.m4s                    produced on demand, cached on disk
 ANY  /api/proxy/subsource/<path>?<query>              forwards to https://api.subsource.net/<path>?<query>
+ANY  /__/auth/<path>?<query>                         Firebase sign-in helper, forwarded as-is to
+                                                      https://streamwatch-2dfd2.firebaseapp.com/__/auth/… (no token)
 GET  anything else                                    the built web app (web/dist), SPA fallback
 ```
 
-How the stream is produced (proven on an iPhone with the prototype in `../phone-test`):
+How the stream is produced (the approach was first proven on an iPhone with a throwaway prototype):
 
 - The start and end of the remote file are fetched once and kept in memory; they hold the stream info and
   the MKV seek index (Cues). ffmpeg reads the source through a local caching proxy so its repeated header
@@ -135,6 +161,27 @@ Notes on the server as built:
   this machine only. Combined with `npm --prefix web run demo` and `&stream=1` on a `/watch` address, a
   desktop browser plays a real link through the server.
 - Access is limited to the uids in `server/config.local.json` (not committed).
+- Read-ahead: after a request the runner produces the first ~30 s of video as fast as possible, then
+  paces itself to `readAheadSpeed` times real time (default 3; 0 = no pacing) and stops reading
+  `readAheadSeconds` of video beyond the last requested segment (default 60). A request that is waiting
+  for a segment always gets full speed. Pacing is backpressure (ffmpeg's stdout is not read), which
+  propagates through the source proxy to the video host, so the home network and the host see a
+  steady, modest rate instead of full-speed downloads.
+- A runner with no requests for about 25 s is stopped. Stopping (idle, seek elsewhere, too many active
+  videos, errors, shutdown) always uses SIGKILL and closes ffmpeg's pipes and its reads through the
+  source proxy (`/src/<id>?r=<runner>`), so no ffmpeg and no connection to the host is left behind; a
+  child still alive 3 s later is logged. Each runner's start line in the log carries the ffmpeg pid.
+  On Linux, `pgrep -a ffmpeg` (or `ps -o pid,stat,etime,cmd -C ffmpeg`) should list nothing a minute
+  after playback stops.
+- Disk cache: besides the size cap (`cacheMaxBytes`, least recently used first), videos not used
+  (served or written) for more than `cacheMaxAgeDays` (default 7; 0 disables) are deleted at startup and
+  every 3 hours, never one with an active runner or requested in the last 10 minutes. "Last used" is the
+  video's cache directory mtime, refreshed at most every 5 minutes while it is served from the cache.
+- Tests with local files only (no video host): `node web/server/test/check.mjs --local-dir=<dir>` and
+  `node web/server/test/pacing.mjs --local-dir=<dir>` serve the `.mkv` files of `<dir>` from a local
+  Range server (a few minutes of H.264/HEVC + AAC each; ffmpeg's `testsrc2` + `sine` are enough).
+  `pacing.mjs` checks the read-ahead pace and limit, that no ffmpeg or source connection is left after
+  an idle stop, a seek restart and a shutdown, seek latency, and the cache age cleanup.
 
 ## Design rules
 
